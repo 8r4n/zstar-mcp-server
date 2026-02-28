@@ -450,7 +450,7 @@ export async function checkDependencies(): Promise<DependencyStatus[]> {
     { name: "sha512sum", required: true },
     { name: "numfmt", required: true },
     { name: "gpg", required: true },
-    { name: "pv", required: false },
+    { name: "pv", required: true },
   ];
 
   const results: DependencyStatus[] = [];

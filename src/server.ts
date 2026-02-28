@@ -285,7 +285,7 @@ export function createServer(): McpServer {
   // --- Tool: check_dependencies ---
   server.tool(
     "check_dependencies",
-    "Check whether all required and optional system dependencies for zstar are installed (bash, tar, zstd, sha512sum, numfmt, gpg, pv).",
+    "Check whether all required system dependencies for zstar are installed (bash, tar, zstd, sha512sum, numfmt, gpg, pv).",
     {},
     async () => {
       const deps = await zstar.checkDependencies();

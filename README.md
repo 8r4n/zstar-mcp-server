@@ -281,7 +281,7 @@ Verify the SHA-512 checksum of a zstar archive.
 
 #### `check_dependencies`
 
-Check whether all required and optional system dependencies are installed.
+Check whether all required system dependencies are installed.
 
 **Parameters:** None
 
@@ -689,7 +689,7 @@ The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be install
 | `sha512sum` | ✅ | Part of coreutils |
 | `numfmt` | ✅ | Part of coreutils |
 | `gpg` | ✅ | Required for encryption/signing |
-| `pv` | ❌ | Enables progress bars |
+| `pv` | ✅ | Required for progress bars during compression |
 
 ### Runtime
 

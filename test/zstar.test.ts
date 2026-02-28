@@ -56,7 +56,7 @@ describe("zstar module", () => {
   });
 
   describe("checkDependencies", () => {
-    it("returns dependency status for all required and optional tools", async () => {
+    it("returns dependency status for all required tools", async () => {
       const deps = await zstar.checkDependencies();
       expect(deps.length).toBe(7);
 
@@ -69,16 +69,16 @@ describe("zstar module", () => {
       expect(names).toContain("gpg");
       expect(names).toContain("pv");
 
-      // Required tools
+      // All tools are required
       const required = deps.filter((d) => d.required);
-      expect(required.length).toBe(6);
+      expect(required.length).toBe(7);
       for (const dep of required) {
         expect(dep.required).toBe(true);
       }
 
-      // Optional tools
+      // No optional tools
       const optional = deps.filter((d) => !d.required);
-      expect(optional.length).toBe(1);
+      expect(optional.length).toBe(0);
 
       // bash and tar should be available on most systems
       const bash = deps.find((d) => d.name === "bash");
