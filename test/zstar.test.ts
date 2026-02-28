@@ -71,14 +71,14 @@ describe("zstar module", () => {
 
       // Required tools
       const required = deps.filter((d) => d.required);
-      expect(required.length).toBe(5);
+      expect(required.length).toBe(6);
       for (const dep of required) {
         expect(dep.required).toBe(true);
       }
 
       // Optional tools
       const optional = deps.filter((d) => !d.required);
-      expect(optional.length).toBe(2);
+      expect(optional.length).toBe(1);
 
       // bash and tar should be available on most systems
       const bash = deps.find((d) => d.name === "bash");

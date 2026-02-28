@@ -307,7 +307,7 @@ export async function checkDependencies(): Promise<DependencyStatus[]> {
     { name: "zstd", required: true },
     { name: "sha512sum", required: true },
     { name: "numfmt", required: true },
-    { name: "gpg", required: false },
+    { name: "gpg", required: true },
     { name: "pv", required: false },
   ];
 

@@ -9,7 +9,7 @@
   </p>
 
   <p>
-    <a href="https://opensource.org/licenses/ISC"><img src="https://img.shields.io/badge/License-ISC-blue.svg" alt="License: ISC" /></a>
+    <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
     <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node.js >= 18" /></a>
     <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet.svg" alt="MCP Compatible" /></a>
     <a href="#openclaw-openclawjson"><img src="https://img.shields.io/badge/OpenClaw-supported-orange.svg" alt="OpenClaw Supported" /></a>
@@ -527,7 +527,7 @@ The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be install
 | `zstd` | ✅ | |
 | `sha512sum` | ✅ | Part of coreutils |
 | `numfmt` | ✅ | Part of coreutils |
-| `gpg` | ❌ | Required for encryption/signing |
+| `gpg` | ✅ | Required for encryption/signing |
 | `pv` | ❌ | Enables progress bars |
 
 ### Runtime
@@ -536,7 +536,7 @@ The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be install
 
 ## License
 
-ISC
+MIT
 
 ---
 

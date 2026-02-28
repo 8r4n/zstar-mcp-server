@@ -18,7 +18,7 @@
   },
   "keywords": ["mcp", "zstar", "tarzst", "archive", "compression", "zstd", "gpg", "encryption"],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/8r4n/zstar-mcp-server/issues"
