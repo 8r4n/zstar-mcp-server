@@ -1,8 +1,31 @@
-# zstar-mcp-server
+<div align="center">
+  <img src="https://raw.githubusercontent.com/8r4n/zstar/main/assets/zstar-logo.png" alt="zstar logo" width="180" />
+
+  <h1>zstar-mcp-server</h1>
+
+  <p>
+    <strong>MCP server for the <a href="https://github.com/8r4n/zstar">zstar</a> archive utility</strong><br />
+    Compressed, encrypted, and signed tar archives — exposed via the Model Context Protocol.
+  </p>
+
+  <p>
+    <a href="https://opensource.org/licenses/ISC"><img src="https://img.shields.io/badge/License-ISC-blue.svg" alt="License: ISC" /></a>
+    <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node.js >= 18" /></a>
+    <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet.svg" alt="MCP Compatible" /></a>
+    <a href="#openclaw-openclawjson"><img src="https://img.shields.io/badge/OpenClaw-supported-orange.svg" alt="OpenClaw Supported" /></a>
+    <a href="https://github.com/8r4n/zstar"><img src="https://img.shields.io/badge/zstar-tarzst.sh-yellow.svg" alt="zstar" /></a>
+  </p>
+</div>
+
+---
+
+## Overview
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes all features of the [zstar](https://github.com/8r4n/zstar) archive utility. It allows AI assistants to create, extract, verify, encrypt, and sign compressed archives through a standardized tool interface.
 
-## Features
+The server uses **stdio transport**, compatible with [OpenClaw](https://github.com/openclaw), [Claude Desktop](https://claude.ai/download), and any other MCP client.
+
+## Tools
 
 The server provides **9 tools** covering every capability of the zstar utility:
 
@@ -18,28 +41,9 @@ The server provides **9 tools** covering every capability of the zstar utility:
 | `verify_checksum` | Verify SHA-512 integrity checksum of an archive |
 | `check_dependencies` | Check whether all required system dependencies are installed |
 
-## Prerequisites
+## Quick Start
 
-### System Dependencies
-
-The zstar utility (`tarzst.sh`) must be installed and available on the system. The following dependencies are required:
-
-**Required:**
-- `bash` (≥ 4.0)
-- `tar`
-- `zstd`
-- `sha512sum` (part of coreutils)
-- `numfmt` (part of coreutils)
-
-**Optional:**
-- `gpg` (gnupg) — required for encryption/signing features
-- `pv` — enables progress bars
-
-### Runtime
-
-- Node.js ≥ 18
-
-## Installation
+### Installation
 
 ```bash
 npm install zstar-mcp-server
@@ -54,26 +58,22 @@ npm install
 npm run build
 ```
 
-## Configuration
-
-### Setting the zstar script path
+### Configuration
 
 The server locates the `tarzst.sh` script in the following order:
 
 1. **`ZSTAR_PATH` environment variable** — set to the absolute path of `tarzst.sh`
 2. **System PATH** — looks for `tarzst` or `tarzst.sh` on your `PATH`
 
-Example:
-
 ```bash
 export ZSTAR_PATH=/usr/local/bin/tarzst.sh
 ```
 
-### MCP Client Configuration
+## Client Configuration
 
-The server communicates over **stdio**, which is the standard transport supported by OpenClaw, Claude Desktop, and other MCP clients.
+The server communicates over **stdio**, the standard transport supported by OpenClaw, Claude Desktop, and other MCP clients.
 
-#### OpenClaw (`openclaw.json`)
+### OpenClaw (`openclaw.json`)
 
 Add the server to the `mcpServers` section of your `openclaw.json` (typically at `~/.openclaw/openclaw.json`):
 
@@ -107,7 +107,7 @@ Or if installed from source:
 }
 ```
 
-#### Claude Desktop (`claude_desktop_config.json`)
+### Claude Desktop (`claude_desktop_config.json`)
 
 ```json
 {
@@ -125,15 +125,13 @@ Or if installed from source:
 
 ## Usage
 
-### Running the server
-
-The server communicates over **stdio** following the MCP standard:
+Start the server directly (it communicates over stdio):
 
 ```bash
 node dist/index.js
 ```
 
-### Tool Reference
+## Tool Reference
 
 #### `create_archive`
 
@@ -265,33 +263,50 @@ Check whether all required and optional system dependencies are installed.
 ## Development
 
 ```bash
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Run tests
-npm test
-
-# Run tests in watch mode
-npm run test:watch
+npm install       # Install dependencies
+npm run build     # Build TypeScript
+npm test          # Run all tests
+npm run test:watch # Run tests in watch mode
 ```
 
 ## Testing
 
-The project includes comprehensive tests using [Vitest](https://vitest.dev/):
+The project includes **36 tests** using [Vitest](https://vitest.dev/):
 
-- **Unit tests** (`test/zstar.test.ts`) — test the zstar wrapper module directly
-- **Integration tests** (`test/server.test.ts`) — test the MCP server via the in-memory transport
+| Suite | File | Tests | Description |
+|-------|------|-------|-------------|
+| Unit | `test/zstar.test.ts` | 10 | Tests the zstar wrapper module directly |
+| MCP Integration | `test/server.test.ts` | 16 | Tests the server via `InMemoryTransport` |
+| OpenClaw Integration | `test/openclaw.test.ts` | 10 | End-to-end tests over stdio via `StdioClientTransport` |
 
-Tests cover:
-- Tool registration and schema validation
-- Dependency checking
-- Checksum verification (valid and corrupted files)
-- Error handling for missing files/scripts
-- Archive creation (when `tarzst.sh` is available)
+Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
+
+## Prerequisites
+
+### System Dependencies
+
+The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be installed. The following system tools are required:
+
+| Dependency | Required | Notes |
+|-----------|----------|-------|
+| `bash` | ✅ | Version ≥ 4.0 |
+| `tar` | ✅ | |
+| `zstd` | ✅ | |
+| `sha512sum` | ✅ | Part of coreutils |
+| `numfmt` | ✅ | Part of coreutils |
+| `gpg` | ❌ | Required for encryption/signing |
+| `pv` | ❌ | Enables progress bars |
+
+### Runtime
+
+- **Node.js** ≥ 18
 
 ## License
 
 ISC
+
+---
+
+<div align="center">
+  <sub>Built on the <a href="https://modelcontextprotocol.io/">Model Context Protocol</a> · Powered by <a href="https://github.com/8r4n/zstar">zstar</a></sub>
+</div>
