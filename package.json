@@ -1,0 +1,36 @@
+{
+  "name": "zstar-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for the zstar (tarzst) archive utility — compressed, encrypted, signed tar archives",
+  "main": "dist/index.js",
+  "bin": {
+    "zstar-mcp-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/8r4n/zstar-mcp-server.git"
+  },
+  "keywords": ["mcp", "zstar", "tarzst", "archive", "compression", "zstd", "gpg", "encryption"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/8r4n/zstar-mcp-server/issues"
+  },
+  "homepage": "https://github.com/8r4n/zstar-mcp-server#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
