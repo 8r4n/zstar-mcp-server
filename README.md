@@ -697,6 +697,15 @@ The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be install
 
 - **Node.js** ≥ 18
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+
+- 🐛 [Reporting bugs](https://github.com/8r4n/zstar-mcp-server/issues/new?labels=bug&template=bug_report.md)
+- 💡 [Requesting features](https://github.com/8r4n/zstar-mcp-server/issues/new?labels=enhancement&template=feature_request.md)
+- 🔧 Submitting pull requests
+- 🏗️ Development setup and project structure
+
 ## License
 
 MIT
