@@ -260,6 +260,239 @@ Check whether all required and optional system dependencies are installed.
 
 **Returns:** Status of each dependency (bash, tar, zstd, sha512sum, numfmt, gpg, pv).
 
+## GPG Encryption Scenarios
+
+The following scenarios demonstrate how the zstar MCP server enables secure, encrypted communication between an AI agent and a user. These workflows show the real-world utility of the server: **the agent never handles plaintext secrets**, and the user retains full control over who can access their data.
+
+### Prerequisites for GPG Scenarios
+
+Both the user and the agent environment need GPG keys. In practice the agent's key pair lives on the server where the MCP server runs.
+
+```bash
+# User generates their key pair (if they don't already have one)
+gpg --full-generate-key          # follow prompts; e.g., user@example.com
+
+# Agent environment generates its own key pair
+gpg --full-generate-key          # e.g., agent@mcp-server.local
+
+# Exchange public keys so each side can encrypt for the other
+gpg --export --armor user@example.com      > user_public.asc
+gpg --export --armor agent@mcp-server.local > agent_public.asc
+
+# Import the other party's public key
+gpg --import agent_public.asc    # user imports agent's public key
+gpg --import user_public.asc     # agent imports user's public key
+```
+
+After this one-time setup both sides can encrypt data that **only the intended recipient can decrypt**.
+
+---
+
+### Scenario 1 — Bidirectional Encrypted Data Exchange
+
+This scenario demonstrates a full round-trip: the user sends encrypted data to the agent, the agent processes it and returns encrypted results — all without plaintext ever being exposed on disk in an unprotected form.
+
+#### How it works
+
+```
+┌────────┐                                          ┌────────┐
+│  User  │                                          │  Agent │
+│        │  1. sign_and_encrypt_archive ──────────► │  (MCP) │
+│        │     signed with: user@example.com        │        │
+│        │     encrypted for: agent@mcp-server.local│        │
+│        │                                          │        │
+│        │  2. Agent decrypts with its private key  │        │
+│        │     Agent verifies user's signature      │        │
+│        │     Agent processes the data             │        │
+│        │                                          │        │
+│        │  3. sign_and_encrypt_archive ◄────────── │        │
+│        │     signed with: agent@mcp-server.local  │        │
+│        │     encrypted for: user@example.com      │        │
+│        │                                          │        │
+│        │  4. User decrypts with their private key │        │
+│        │     User verifies agent's signature      │        │
+└────────┘                                          └────────┘
+```
+
+#### Step 1 — User sends encrypted data to the agent
+
+The user creates an archive signed with their key and encrypted for the agent:
+
+```
+User → Agent (via MCP tool call):
+
+sign_and_encrypt_archive({
+  inputPaths:    ["./financial-report.csv", "./projections/"],
+  signingKeyId:  "user@example.com",
+  passphrase:    "users-gpg-passphrase",
+  recipientKeyId: "agent@mcp-server.local",
+  outputName:    "data-for-agent"
+})
+```
+
+**Output files:**
+- `data-for-agent.tar.zst.gpg` — encrypted; only the agent's private key can decrypt
+- `data-for-agent.tar.zst.sha512` — integrity checksum
+- `data-for-agent_decompress.sh` — self-extracting script (handles decryption + verification)
+
+#### Step 2 — Agent decrypts and processes
+
+The agent extracts the archive using its own GPG private key. The decompress script automatically verifies the user's signature:
+
+```
+Agent (MCP tool call):
+
+extract_archive({
+  scriptPath: "./data-for-agent_decompress.sh"
+})
+```
+
+The agent now has the plaintext files and can process them (analyze data, generate reports, etc.).
+
+#### Step 3 — Agent returns encrypted results to the user
+
+The agent packages its results and encrypts them for the user:
+
+```
+Agent → User (via MCP tool call):
+
+sign_and_encrypt_archive({
+  inputPaths:    ["./analysis-results/"],
+  signingKeyId:  "agent@mcp-server.local",
+  passphrase:    "agents-gpg-passphrase",
+  recipientKeyId: "user@example.com",
+  outputName:    "results-for-user"
+})
+```
+
+#### Step 4 — User decrypts the results
+
+The user runs the decompress script, which decrypts with their private key and verifies the agent's signature:
+
+```bash
+bash results-for-user_decompress.sh
+# → Decrypts, verifies agent signature, extracts analysis-results/
+```
+
+#### Why this matters
+
+| Property | Guarantee |
+|----------|-----------|
+| **Confidentiality** | Data is encrypted at rest — only the intended recipient's private key can decrypt |
+| **Authenticity** | GPG signatures prove the sender's identity; tampering is detected |
+| **Integrity** | SHA-512 checksums catch any corruption in transit or on disk |
+| **Non-repudiation** | The sender cannot deny having created the archive (signature is tied to their key) |
+
+---
+
+### Scenario 2 — User-Controlled Private Data with Authorized Access
+
+This scenario demonstrates how a user can encrypt sensitive data and selectively authorize the agent to access it using GPG public-key encryption. The user retains full control: **only archives explicitly encrypted for the agent's public key are accessible**.
+
+#### The principle
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    USER'S DATA VAULT                             │
+│                                                                  │
+│  personal-taxes.tar.zst.gpg     ← encrypted for user only       │
+│  medical-records.tar.zst.gpg    ← encrypted for user only       │
+│  project-data.tar.zst.gpg       ← encrypted for user + agent ✓  │
+│  credentials.tar.zst.gpg        ← encrypted for user only       │
+│                                                                  │
+│  The agent can ONLY decrypt project-data.tar.zst.gpg because     │
+│  it is the only archive encrypted for agent@mcp-server.local     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Step 1 — User encrypts private data (agent has NO access)
+
+The user creates encrypted archives for their own use. These are encrypted with the user's own key — the agent **cannot** decrypt them:
+
+```
+encrypt_archive({
+  inputPaths: ["./tax-returns/"],
+  password:   "users-secret-password",
+  outputName: "personal-taxes"
+})
+```
+
+Or using GPG public-key encryption for the user only:
+
+```
+sign_and_encrypt_archive({
+  inputPaths:    ["./medical-records/"],
+  signingKeyId:  "user@example.com",
+  passphrase:    "users-gpg-passphrase",
+  recipientKeyId: "user@example.com",   ← encrypted for self
+  outputName:    "medical-records"
+})
+```
+
+The agent has no way to decrypt either of these archives. The private keys belong solely to the user.
+
+#### Step 2 — User grants the agent access to specific data
+
+When the user decides to share specific data with the agent, they encrypt it for the agent's public key:
+
+```
+sign_and_encrypt_archive({
+  inputPaths:    ["./project-data/"],
+  signingKeyId:  "user@example.com",
+  passphrase:    "users-gpg-passphrase",
+  recipientKeyId: "agent@mcp-server.local",   ← authorized for agent
+  outputName:    "project-data"
+})
+```
+
+This is the explicit authorization step. The user is making a conscious decision: *"I want the agent to be able to read this specific data."*
+
+#### Step 3 — Agent accesses only the authorized data
+
+```
+# ✓ This succeeds — the agent's private key can decrypt it
+extract_archive({ scriptPath: "./project-data_decompress.sh" })
+
+# ✗ This fails — the agent does not have the decryption key
+extract_archive({ scriptPath: "./personal-taxes_decompress.sh" })
+#   → GPG error: no secret key available for decryption
+```
+
+#### Step 4 — User revokes access
+
+Access revocation is straightforward: the user simply stops encrypting new data for the agent's key. Previously shared archives remain encrypted — but no new data flows to the agent. For stronger revocation, the user can rotate their own keys.
+
+#### The burn-after-reading option
+
+For maximum security, use `create_burn_after_reading_archive` for one-time data sharing. After the agent extracts the data, the archive self-shreds:
+
+```
+create_burn_after_reading_archive({
+  inputPaths: ["./one-time-credentials/"],
+  outputName: "temp-access"
+})
+```
+
+After extraction, the `.tar.zst`, `.sha512`, and `_decompress.sh` files are securely overwritten and deleted. The data exists only in the extracted form — there is no archive to re-extract or forward.
+
+---
+
+### Why the MCP Server Matters for Data Protection
+
+The zstar MCP server bridges the gap between **powerful encryption tools** and **AI agent workflows**. Without it, an agent would need raw shell access, credential handling, and deep knowledge of GPG and tar commands. The MCP server provides:
+
+| Capability | Without MCP Server | With zstar MCP Server |
+|-----------|-------------------|----------------------|
+| **Encryption** | Agent runs raw `gpg` commands, handles passphrases in shell history | Structured API with parameter validation; no shell injection risk |
+| **Key management** | Agent must know GPG internals | Agent calls `sign_and_encrypt_archive` with key IDs |
+| **Integrity** | Agent must manually run `sha512sum` | Automatic SHA-512 checksums on every archive |
+| **Access control** | No boundary between "agent data" and "user data" | GPG public-key encryption enforces cryptographic access boundaries |
+| **Audit trail** | None | Each archive is signed — provenance is verifiable |
+| **Secure disposal** | Agent must know `shred` semantics | `create_burn_after_reading_archive` handles secure deletion |
+| **Error handling** | Raw shell errors | Structured success/failure responses with exit codes |
+
+The server turns GPG-based encryption from a manual, error-prone process into a **safe, auditable, tool-call API** that AI agents can use without ever needing direct access to private keys, shell commands, or filesystem internals.
+
 ## Development
 
 ```bash
