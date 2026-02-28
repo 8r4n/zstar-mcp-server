@@ -310,6 +310,188 @@ export function createServer(): McpServer {
     }
   );
 
+  // --- Tool: gpg_list_keys ---
+  server.tool(
+    "gpg_list_keys",
+    "List GPG keys in the keyring. Use this to check which keys are available for signing, encryption, and decryption. Part of the GPG key setup walkthrough.",
+    {
+      secretOnly: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, list only secret (private) keys. Default: false (lists public keys)"
+        ),
+    },
+    async (params) => {
+      const result = await zstar.gpgListKeys(params.secretOnly ?? false);
+      const success = result.exitCode === 0;
+      const output = result.stdout.trim() || result.stderr.trim();
+      const isEmpty = !output || output.includes("trustdb created");
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: isEmpty
+              ? `No ${params.secretOnly ? "secret " : ""}keys found in the GPG keyring. Use gpg_generate_key to create a new key pair.`
+              : `GPG ${params.secretOnly ? "Secret " : ""}Keys:\n\n${output}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // --- Tool: gpg_generate_key ---
+  server.tool(
+    "gpg_generate_key",
+    "Generate a new GPG key pair for the user or agent. This is the first step in the GPG setup walkthrough. Creates both a public key (for others to encrypt data for you) and a private key (for decryption and signing).",
+    {
+      name: z.string().min(1).describe("Real name for the key (e.g., 'Alice Smith' or 'MCP Agent')"),
+      email: z
+        .string()
+        .min(1)
+        .describe(
+          "Email address for the key (e.g., 'user@example.com' or 'agent@mcp-server.local')"
+        ),
+      passphrase: z
+        .string()
+        .min(1)
+        .describe("Passphrase to protect the private key"),
+      keyType: z
+        .enum(["RSA", "DSA", "EDDSA"])
+        .optional()
+        .describe("Key type. Default: RSA"),
+      keyLength: z
+        .number()
+        .int()
+        .min(1024)
+        .max(4096)
+        .optional()
+        .describe("Key length in bits (for RSA/DSA). Default: 4096"),
+      expireDate: z
+        .string()
+        .optional()
+        .describe(
+          "Key expiry (e.g., '1y' for 1 year, '0' for no expiry). Default: '0'"
+        ),
+    },
+    async (params) => {
+      const result = await zstar.gpgGenerateKey({
+        name: params.name,
+        email: params.email,
+        passphrase: params.passphrase,
+        keyType: params.keyType,
+        keyLength: params.keyLength,
+        expireDate: params.expireDate,
+      });
+      const success =
+        result.exitCode === 0 ||
+        result.stderr.includes("key") ||
+        result.stderr.includes("marked as ultimately trusted");
+      const parts: string[] = [];
+      parts.push(
+        success
+          ? `GPG key pair generated successfully for ${params.name} <${params.email}>.`
+          : `GPG key generation FAILED (exit code ${result.exitCode}).`
+      );
+      if (result.stderr.trim()) {
+        parts.push(`\nDetails:\n${result.stderr.trim()}`);
+      }
+      if (success) {
+        parts.push(
+          `\nNext steps:\n1. Use gpg_list_keys to verify the new key\n2. Use gpg_export_public_key to export the public key for sharing\n3. Share the exported key with the other party for import`
+        );
+      }
+      return {
+        content: [{ type: "text" as const, text: parts.join("\n") }],
+      };
+    }
+  );
+
+  // --- Tool: gpg_export_public_key ---
+  server.tool(
+    "gpg_export_public_key",
+    "Export a GPG public key in armored (ASCII) format. Use this to share your public key with the other party so they can encrypt data for you. Part of the GPG key setup walkthrough.",
+    {
+      keyId: z
+        .string()
+        .min(1)
+        .describe(
+          "Key ID, email, or fingerprint of the key to export (e.g., 'user@example.com')"
+        ),
+      outputFile: z
+        .string()
+        .optional()
+        .describe(
+          "File path to save the exported key (e.g., './user_public.asc'). If omitted, the armored key is returned directly."
+        ),
+    },
+    async (params) => {
+      const result = await zstar.gpgExportPublicKey({
+        keyId: params.keyId,
+        outputFile: params.outputFile,
+      });
+      const success = result.exitCode === 0;
+      const parts: string[] = [];
+      if (success && params.outputFile) {
+        parts.push(
+          `Public key exported to ${params.outputFile}.\n\nNext step: Share this file with the other party and have them run gpg_import_key to import it.`
+        );
+      } else if (success && result.stdout.trim()) {
+        parts.push(
+          `Exported public key for ${params.keyId}:\n\n${result.stdout.trim()}`
+        );
+      } else {
+        parts.push(
+          `Public key export FAILED (exit code ${result.exitCode}).`
+        );
+        if (result.stderr.trim()) {
+          parts.push(`\nErrors:\n${result.stderr.trim()}`);
+        }
+      }
+      return {
+        content: [{ type: "text" as const, text: parts.join("\n") }],
+      };
+    }
+  );
+
+  // --- Tool: gpg_import_key ---
+  server.tool(
+    "gpg_import_key",
+    "Import a GPG public key from a file into the keyring. Use this to import the other party's public key so you can encrypt data for them. Part of the GPG key setup walkthrough.",
+    {
+      keyFile: z
+        .string()
+        .min(1)
+        .describe(
+          "Path to the armored key file to import (e.g., './agent_public.asc')"
+        ),
+    },
+    async (params) => {
+      const result = await zstar.gpgImportKey({ keyFile: params.keyFile });
+      const success = result.exitCode === 0;
+      const parts: string[] = [];
+      if (success) {
+        parts.push(`Key imported successfully.`);
+        if (result.stderr.trim()) {
+          parts.push(`\nDetails:\n${result.stderr.trim()}`);
+        }
+        parts.push(
+          `\nNext steps:\n1. Use gpg_list_keys to verify the imported key\n2. You can now use sign_and_encrypt_archive with this key as the recipientKeyId`
+        );
+      } else {
+        parts.push(
+          `Key import FAILED (exit code ${result.exitCode}).`
+        );
+        if (result.stderr.trim()) {
+          parts.push(`\nErrors:\n${result.stderr.trim()}`);
+        }
+      }
+      return {
+        content: [{ type: "text" as const, text: parts.join("\n") }],
+      };
+    }
+  );
+
   return server;
 }
 

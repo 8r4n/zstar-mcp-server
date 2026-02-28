@@ -27,7 +27,7 @@ The server uses **stdio transport**, compatible with [OpenClaw](https://github.c
 
 ## Tools
 
-The server provides **9 tools** covering every capability of the zstar utility:
+The server provides **13 tools** covering every capability of the zstar utility plus GPG key management:
 
 | Tool | Description |
 |------|-------------|
@@ -40,6 +40,10 @@ The server provides **9 tools** covering every capability of the zstar utility:
 | `list_archive` | List archive contents without extracting |
 | `verify_checksum` | Verify SHA-512 integrity checksum of an archive |
 | `check_dependencies` | Check whether all required system dependencies are installed |
+| `gpg_list_keys` | List GPG keys in the keyring (public or secret) |
+| `gpg_generate_key` | Generate a new GPG key pair for user or agent |
+| `gpg_export_public_key` | Export a GPG public key in armored format for sharing |
+| `gpg_import_key` | Import a GPG public key from a file into the keyring |
 
 ## Quick Start
 
@@ -260,13 +264,140 @@ Check whether all required and optional system dependencies are installed.
 
 **Returns:** Status of each dependency (bash, tar, zstd, sha512sum, numfmt, gpg, pv).
 
+---
+
+#### `gpg_list_keys`
+
+List GPG keys in the keyring. First step in the GPG setup walkthrough — check which keys are already available.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `secretOnly` | `boolean` | No | If true, list only secret (private) keys. Default: false |
+
+---
+
+#### `gpg_generate_key`
+
+Generate a new GPG key pair. Creates both a public key (for others to encrypt data for you) and a private key (for decryption and signing).
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `name` | `string` | Yes | Real name for the key (e.g., "Alice Smith" or "MCP Agent") |
+| `email` | `string` | Yes | Email address for the key (e.g., "user@example.com") |
+| `passphrase` | `string` | Yes | Passphrase to protect the private key |
+| `keyType` | `string` | No | Key type: "RSA", "DSA", or "EDDSA". Default: "RSA" |
+| `keyLength` | `number` | No | Key length in bits (1024-4096, for RSA/DSA). Default: 4096 |
+| `expireDate` | `string` | No | Key expiry (e.g., "1y", "0" for no expiry). Default: "0" |
+
+---
+
+#### `gpg_export_public_key`
+
+Export a GPG public key in armored (ASCII) format for sharing with the other party.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `keyId` | `string` | Yes | Key ID, email, or fingerprint to export |
+| `outputFile` | `string` | No | File path to save the key. If omitted, returns the key directly |
+
+---
+
+#### `gpg_import_key`
+
+Import a GPG public key from a file into the keyring. Use this to import the other party's public key.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `keyFile` | `string` | Yes | Path to the armored key file to import |
+
+## GPG Key Setup Walkthrough
+
+The MCP server includes 4 GPG key management tools that enable an agent to walk users through the complete GPG key setup process — no manual `gpg` commands needed.
+
+```mermaid
+flowchart TD
+    A["1. gpg_list_keys\nCheck existing keys"] --> B{Keys exist?}
+    B -->|No| C["2. gpg_generate_key\nGenerate key pair for user"]
+    B -->|Yes| D["3. gpg_export_public_key\nExport user's public key"]
+    C --> D
+    D --> E["Share public key with other party"]
+    E --> F["4. gpg_import_key\nImport other party's public key"]
+    F --> G["✓ Ready for encrypted communication\nUse sign_and_encrypt_archive"]
+
+    style A fill:#e1f0ff
+    style C fill:#e1ffe1
+    style D fill:#fff3e1
+    style F fill:#ffe1f0
+    style G fill:#d0f9d0
+```
+
+### Step 1 — Check existing keys
+
+```
+gpg_list_keys({})
+gpg_list_keys({ secretOnly: true })
+```
+
+The agent checks which keys are already in the keyring. If the user or agent already has a key pair, this step confirms it.
+
+### Step 2 — Generate keys (if needed)
+
+```
+gpg_generate_key({
+  name:       "Alice Smith",
+  email:      "user@example.com",
+  passphrase: "secure-passphrase",
+  keyType:    "RSA",
+  keyLength:  4096
+})
+```
+
+For the agent's environment:
+
+```
+gpg_generate_key({
+  name:       "MCP Agent",
+  email:      "agent@mcp-server.local",
+  passphrase: "agent-passphrase"
+})
+```
+
+### Step 3 — Export public keys for sharing
+
+```
+gpg_export_public_key({
+  keyId:      "user@example.com",
+  outputFile: "./user_public.asc"
+})
+
+gpg_export_public_key({
+  keyId:      "agent@mcp-server.local",
+  outputFile: "./agent_public.asc"
+})
+```
+
+### Step 4 — Import the other party's public key
+
+```
+gpg_import_key({ keyFile: "./agent_public.asc" })
+gpg_import_key({ keyFile: "./user_public.asc" })
+```
+
+After this walkthrough, both parties can use `sign_and_encrypt_archive` for secure, bidirectional encrypted communication.
+
+---
+
 ## GPG Encryption Scenarios
 
 The following scenarios demonstrate how the zstar MCP server enables secure, encrypted communication between an AI agent and a user. These workflows show the real-world utility of the server: **the agent never handles plaintext secrets**, and the user retains full control over who can access their data.
 
 ### Prerequisites for GPG Scenarios
 
-Both the user and the agent environment need GPG keys. In practice the agent's key pair lives on the server where the MCP server runs.
+Both the user and the agent environment need GPG keys. Use the [GPG Key Setup Walkthrough](#gpg-key-setup-walkthrough) tools to set up keys interactively through the MCP server, or run the manual commands below:
 
 ```bash
 # User generates their key pair (if they don't already have one)
@@ -506,15 +637,15 @@ npm run test:watch # Run tests in watch mode
 
 ## Testing
 
-The project includes **36 tests** using [Vitest](https://vitest.dev/):
+The project includes **45 tests** using [Vitest](https://vitest.dev/):
 
 | Suite | File | Tests | Description |
 |-------|------|-------|-------------|
-| Unit | `test/zstar.test.ts` | 10 | Tests the zstar wrapper module directly |
-| MCP Integration | `test/server.test.ts` | 16 | Tests the server via `InMemoryTransport` |
+| Unit | `test/zstar.test.ts` | 14 | Tests the zstar wrapper module directly (including GPG key functions) |
+| MCP Integration | `test/server.test.ts` | 21 | Tests the server via `InMemoryTransport` |
 | OpenClaw Integration | `test/openclaw.test.ts` | 10 | End-to-end tests over stdio via `StdioClientTransport` |
 
-Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
+Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
 
 ## Prerequisites
 

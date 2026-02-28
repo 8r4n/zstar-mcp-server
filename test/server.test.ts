@@ -41,7 +41,11 @@ describe("zstar MCP server", () => {
       expect(toolNames).toContain("list_archive");
       expect(toolNames).toContain("verify_checksum");
       expect(toolNames).toContain("check_dependencies");
-      expect(tools.length).toBe(9);
+      expect(toolNames).toContain("gpg_list_keys");
+      expect(toolNames).toContain("gpg_generate_key");
+      expect(toolNames).toContain("gpg_export_public_key");
+      expect(toolNames).toContain("gpg_import_key");
+      expect(tools.length).toBe(13);
     });
 
     it("each tool has a description", async () => {
@@ -143,6 +147,32 @@ describe("zstar MCP server", () => {
         expect(Object.keys(props).length).toBe(0);
       }
     });
+
+    it("gpg_generate_key requires name, email, and passphrase", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "gpg_generate_key");
+      expect(tool).toBeDefined();
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("name");
+      expect(required).toContain("email");
+      expect(required).toContain("passphrase");
+    });
+
+    it("gpg_export_public_key requires keyId", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "gpg_export_public_key");
+      expect(tool).toBeDefined();
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("keyId");
+    });
+
+    it("gpg_import_key requires keyFile", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "gpg_import_key");
+      expect(tool).toBeDefined();
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("keyFile");
+    });
   });
 
   describe("tool execution", () => {
@@ -211,6 +241,27 @@ describe("zstar MCP server", () => {
       expect(text).toContain("SUCCESS");
 
       fs.rmSync(tmpDir, { recursive: true });
+    });
+
+    it("gpg_list_keys returns key listing or empty message", async () => {
+      const result = await client.callTool({
+        name: "gpg_list_keys",
+        arguments: {},
+      });
+      expect(result.content).toHaveLength(1);
+      const text = (result.content[0] as { type: string; text: string }).text;
+      // Should return either key listing or empty message
+      expect(text.length).toBeGreaterThan(0);
+    });
+
+    it("gpg_import_key returns error for nonexistent file", async () => {
+      const result = await client.callTool({
+        name: "gpg_import_key",
+        arguments: { keyFile: "/nonexistent/key.asc" },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("not found");
     });
   });
 });

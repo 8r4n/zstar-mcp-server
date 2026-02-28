@@ -210,4 +210,39 @@ describe("zstar module", () => {
       fs.rmSync(tmpDir, { recursive: true });
     });
   });
+
+  describe("gpgListKeys", () => {
+    it("returns a result without crashing", async () => {
+      const result = await zstar.gpgListKeys();
+      // gpg --list-keys exits 0 even if keyring is empty (or 2 if no keyring)
+      expect(typeof result.exitCode).toBe("number");
+      expect(typeof result.stdout).toBe("string");
+      expect(typeof result.stderr).toBe("string");
+    });
+
+    it("accepts secretOnly parameter", async () => {
+      const result = await zstar.gpgListKeys(true);
+      expect(typeof result.exitCode).toBe("number");
+    });
+  });
+
+  describe("gpgImportKey", () => {
+    it("returns error when key file does not exist", async () => {
+      const result = await zstar.gpgImportKey({
+        keyFile: "/nonexistent/key.asc",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not found");
+    });
+  });
+
+  describe("gpgExportPublicKey", () => {
+    it("returns a result for a nonexistent key without crashing", async () => {
+      const result = await zstar.gpgExportPublicKey({
+        keyId: "nonexistent-key@example.com",
+      });
+      // gpg exits 0 but returns empty output for non-existent keys
+      expect(typeof result.exitCode).toBe("number");
+    });
+  });
 });

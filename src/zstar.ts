@@ -298,6 +298,148 @@ export async function verifyChecksum(
 }
 
 /**
+ * Result of listing GPG keys.
+ */
+export interface GpgKeyInfo {
+  type: "pub" | "sec";
+  keyId: string;
+  uid: string;
+  fingerprint: string;
+  created: string;
+  expires: string;
+}
+
+/**
+ * Options for generating a GPG key.
+ */
+export interface GenerateGpgKeyOptions {
+  /** Real name for the key. */
+  name: string;
+  /** Email address for the key. */
+  email: string;
+  /** Passphrase for the key. */
+  passphrase: string;
+  /** Key type. Default: RSA. */
+  keyType?: "RSA" | "DSA" | "EDDSA";
+  /** Key length in bits (for RSA/DSA). Default: 4096. */
+  keyLength?: number;
+  /** Key expiry (e.g., "1y", "0" for no expiry). Default: "0". */
+  expireDate?: string;
+}
+
+/**
+ * Options for exporting a GPG public key.
+ */
+export interface ExportGpgKeyOptions {
+  /** Key ID, email, or fingerprint to export. */
+  keyId: string;
+  /** Output file path. If omitted, returns armored key in stdout. */
+  outputFile?: string;
+}
+
+/**
+ * Options for importing a GPG key.
+ */
+export interface ImportGpgKeyOptions {
+  /** Path to the key file to import. */
+  keyFile: string;
+}
+
+/**
+ * List GPG keys in the keyring.
+ */
+export async function gpgListKeys(
+  secretOnly: boolean = false
+): Promise<ZstarResult> {
+  const args = secretOnly
+    ? ["--list-secret-keys", "--keyid-format", "long"]
+    : ["--list-keys", "--keyid-format", "long"];
+  return execCommand("gpg", args);
+}
+
+/**
+ * Generate a new GPG key pair using batch mode.
+ */
+export async function gpgGenerateKey(
+  options: GenerateGpgKeyOptions
+): Promise<ZstarResult> {
+  const keyType = options.keyType || "RSA";
+  const keyLength = options.keyLength || 4096;
+  const expireDate = options.expireDate || "0";
+
+  let keyTypeParam: string;
+  let subkeyTypeParam: string;
+  let lengthLines: string;
+
+  if (keyType === "EDDSA") {
+    keyTypeParam = "Key-Type: EDDSA";
+    subkeyTypeParam = "Subkey-Type: ECDH";
+    lengthLines = "Key-Curve: ed25519\nSubkey-Curve: cv25519";
+  } else {
+    keyTypeParam = `Key-Type: ${keyType}`;
+    subkeyTypeParam = `Subkey-Type: ${keyType}`;
+    lengthLines = `Key-Length: ${keyLength}\nSubkey-Length: ${keyLength}`;
+  }
+
+  const batchConfig = [
+    "%no-protection",
+    keyTypeParam,
+    lengthLines,
+    subkeyTypeParam,
+    `Name-Real: ${options.name}`,
+    `Name-Email: ${options.email}`,
+    `Expire-Date: ${expireDate}`,
+    `Passphrase: ${options.passphrase}`,
+    "%commit",
+  ].join("\n");
+
+  // Write batch config to a temp file for gpg to read
+  const tmpDir = fs.mkdtempSync(path.join(require("os").tmpdir(), "zstar-gpg-"));
+  const batchFile = path.join(tmpDir, "keygen-batch.txt");
+  try {
+    fs.writeFileSync(batchFile, batchConfig, { mode: 0o600 });
+    const result = await execCommand("gpg", ["--batch", "--gen-key", batchFile]);
+    return result;
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true });
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+/**
+ * Export a GPG public key in armored format.
+ */
+export async function gpgExportPublicKey(
+  options: ExportGpgKeyOptions
+): Promise<ZstarResult> {
+  const args = ["--export", "--armor", options.keyId];
+  if (options.outputFile) {
+    args.push("--output", options.outputFile);
+  }
+  return execCommand("gpg", args);
+}
+
+/**
+ * Import a GPG key from a file.
+ */
+export async function gpgImportKey(
+  options: ImportGpgKeyOptions
+): Promise<ZstarResult> {
+  const keyPath = path.resolve(options.keyFile);
+  if (!fs.existsSync(keyPath)) {
+    return {
+      stdout: "",
+      stderr: `Key file not found: ${keyPath}`,
+      exitCode: 1,
+    };
+  }
+  return execCommand("gpg", ["--import", keyPath]);
+}
+
+/**
  * Check availability of system dependencies.
  */
 export async function checkDependencies(): Promise<DependencyStatus[]> {
