@@ -344,13 +344,13 @@ The MCP server includes 4 GPG key management tools that enable an agent to walk 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'lineColor': '#e94560', 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eee', 'edgeLabelBackground': '#1a1a2e', 'clusterBkg': '#0d1b2a'}}}%%
 flowchart TD
-    A["🔭 1. gpg_list_keys\nCheck existing keys"] --> B{Keys exist?}
-    B -->|No| C["🌟 2. gpg_generate_key\nGenerate key pair for user"]
-    B -->|Yes| D["☄️ 3. gpg_export_public_key\nExport user's public key"]
+    A["🔭 1. gpg_list_keys Check existing keys"] --> B{Keys exist?}
+    B -->|No| C["🌟 2. gpg_generate_key Generate key pair for user"]
+    B -->|Yes| D["☄️ 3. gpg_export_public_key Export user's public key"]
     C --> D
     D --> E["🚀 Share public key with other party"]
-    E --> F["🪐 4. gpg_import_key\nImport other party's public key"]
-    F --> G["💫 Ready for encrypted communication\nUse sign_and_encrypt_archive"]
+    E --> F["🪐 4. gpg_import_key Import other party's public key"]
+    F --> G["💫 Ready for encrypted communication Use sign_and_encrypt_archive"]
 
     style A fill:#1a1a2e,stroke:#e94560,color:#eee
     style B fill:#16213e,stroke:#0f3460,color:#eee
