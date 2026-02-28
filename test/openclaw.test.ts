@@ -115,7 +115,10 @@ describe("OpenClaw integration (stdio transport)", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-test-"));
       try {
         fs.writeFileSync(path.join(tmpDir, "data.bin"), "openclaw test data\n");
-        execSync("sha512sum data.bin > data.bin.sha512", { cwd: tmpDir });
+        const checksumCmd = process.platform === "darwin"
+          ? "shasum -a 512 data.bin > data.bin.sha512"
+          : "sha512sum data.bin > data.bin.sha512";
+        execSync(checksumCmd, { cwd: tmpDir });
 
         const result = await client.callTool({
           name: "verify_checksum",
@@ -136,7 +139,10 @@ describe("OpenClaw integration (stdio transport)", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-test-"));
       try {
         fs.writeFileSync(path.join(tmpDir, "data.bin"), "original\n");
-        execSync("sha512sum data.bin > data.bin.sha512", { cwd: tmpDir });
+        const checksumCmd = process.platform === "darwin"
+          ? "shasum -a 512 data.bin > data.bin.sha512"
+          : "sha512sum data.bin > data.bin.sha512";
+        execSync(checksumCmd, { cwd: tmpDir });
         fs.writeFileSync(path.join(tmpDir, "data.bin"), "tampered\n");
 
         const result = await client.callTool({

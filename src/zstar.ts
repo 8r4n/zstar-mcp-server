@@ -281,6 +281,7 @@ export async function listArchive(
 
 /**
  * Verify SHA-512 checksum of an archive.
+ * Uses sha512sum on Linux and shasum -a 512 on macOS.
  */
 export async function verifyChecksum(
   options: VerifyChecksumOptions
@@ -294,6 +295,9 @@ export async function verifyChecksum(
     };
   }
   const cwd = options.cwd || path.dirname(checksumPath);
+  if (process.platform === "darwin") {
+    return execCommand("shasum", ["-a", "512", "-c", checksumPath], { cwd });
+  }
   return execCommand("sha512sum", ["-c", checksumPath], { cwd });
 }
 
@@ -441,14 +445,18 @@ export async function gpgImportKey(
 
 /**
  * Check availability of system dependencies.
+ * On macOS, checks for platform-specific alternatives (e.g., shasum for sha512sum,
+ * gnumfmt for numfmt) when the standard command is not found.
  */
 export async function checkDependencies(): Promise<DependencyStatus[]> {
-  const deps: Array<{ name: string; required: boolean }> = [
+  const isMac = process.platform === "darwin";
+
+  const deps: Array<{ name: string; required: boolean; macAlternative?: string }> = [
     { name: "bash", required: true },
     { name: "tar", required: true },
     { name: "zstd", required: true },
-    { name: "sha512sum", required: true },
-    { name: "numfmt", required: true },
+    { name: "sha512sum", required: true, macAlternative: "shasum" },
+    { name: "numfmt", required: true, macAlternative: "gnumfmt" },
     { name: "gpg", required: true },
     { name: "pv", required: true },
   ];
@@ -456,9 +464,17 @@ export async function checkDependencies(): Promise<DependencyStatus[]> {
   const results: DependencyStatus[] = [];
   for (const dep of deps) {
     const result = await execCommand("which", [dep.name]);
+    let available = result.exitCode === 0;
+
+    // On macOS, check for platform-specific alternatives
+    if (!available && isMac && dep.macAlternative) {
+      const altResult = await execCommand("which", [dep.macAlternative]);
+      available = altResult.exitCode === 0;
+    }
+
     results.push({
       name: dep.name,
-      available: result.exitCode === 0,
+      available,
       required: dep.required,
     });
   }

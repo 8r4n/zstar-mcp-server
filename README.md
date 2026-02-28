@@ -683,15 +683,29 @@ Tests cover tool registration, schema validation, dependency checking, checksum 
 
 The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be installed. The following system tools are required:
 
-| Dependency | Required | Notes |
-|-----------|----------|-------|
-| `bash` | ✅ | Version ≥ 4.0 |
-| `tar` | ✅ | |
-| `zstd` | ✅ | |
-| `sha512sum` | ✅ | Part of coreutils |
-| `numfmt` | ✅ | Part of coreutils |
-| `gpg` | ✅ | Required for encryption/signing |
-| `pv` | ✅ | Required for progress bars during compression |
+| Dependency | Required | Linux | macOS (via Homebrew) |
+|-----------|----------|-------|------|
+| `bash` | ✅ | Version ≥ 4.0 | `brew install bash` (macOS ships v3) |
+| `tar` | ✅ | Pre-installed | Pre-installed |
+| `zstd` | ✅ | `apt install zstd` | `brew install zstd` |
+| `sha512sum` | ✅ | Part of coreutils | `shasum -a 512` (pre-installed); or `brew install coreutils` |
+| `numfmt` | ✅ | Part of coreutils | `brew install coreutils` (provides `gnumfmt`) |
+| `gpg` | ✅ | `apt install gnupg` | `brew install gnupg` |
+| `pv` | ✅ | `apt install pv` | `brew install pv` |
+
+#### Quick install
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt install bash tar zstd coreutils gnupg pv
+```
+
+**macOS (Homebrew):**
+```bash
+brew install bash zstd coreutils gnupg pv
+```
+
+> **Note:** The MCP server automatically detects macOS and uses platform-appropriate commands (`shasum -a 512` instead of `sha512sum`, `gnumfmt` instead of `numfmt`). No manual aliasing is needed.
 
 ### Runtime
 

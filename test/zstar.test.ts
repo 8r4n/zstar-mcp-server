@@ -107,8 +107,11 @@ describe("zstar module", () => {
       const testFile = path.join(tmpDir, "testfile.txt");
       fs.writeFileSync(testFile, "hello world\n");
 
-      // Generate checksum
-      execSync(`sha512sum testfile.txt > testfile.txt.sha512`, { cwd: tmpDir });
+      // Generate checksum (use shasum on macOS, sha512sum on Linux)
+      const checksumCmd = process.platform === "darwin"
+        ? `shasum -a 512 testfile.txt > testfile.txt.sha512`
+        : `sha512sum testfile.txt > testfile.txt.sha512`;
+      execSync(checksumCmd, { cwd: tmpDir });
 
       const result = await zstar.verifyChecksum({
         checksumFile: "testfile.txt.sha512",
@@ -129,8 +132,11 @@ describe("zstar module", () => {
       const testFile = path.join(tmpDir, "testfile.txt");
       fs.writeFileSync(testFile, "hello world\n");
 
-      // Generate checksum, then modify the file
-      execSync(`sha512sum testfile.txt > testfile.txt.sha512`, { cwd: tmpDir });
+      // Generate checksum, then modify the file (use shasum on macOS)
+      const checksumCmd = process.platform === "darwin"
+        ? `shasum -a 512 testfile.txt > testfile.txt.sha512`
+        : `sha512sum testfile.txt > testfile.txt.sha512`;
+      execSync(checksumCmd, { cwd: tmpDir });
       fs.writeFileSync(testFile, "modified content\n");
 
       const result = await zstar.verifyChecksum({

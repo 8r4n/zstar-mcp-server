@@ -61,17 +61,19 @@ If you find a bug, please [open an issue](https://github.com/8r4n/zstar-mcp-serv
 
 ### Prerequisites
 
-| Dependency | Required |
-|---|---|
-| Node.js ≥ 18 | ✅ |
-| `bash` | ✅ |
-| `tar` | ✅ |
-| `zstd` | ✅ |
-| `sha512sum` | ✅ |
-| `numfmt` | ✅ |
-| `gpg` | ✅ |
-| `pv` | ✅ |
-| [tarzst.sh](https://github.com/8r4n/zstar) | ✅ |
+| Dependency | Required | Linux | macOS |
+|---|---|---|---|
+| Node.js ≥ 18 | ✅ | `apt install nodejs` | `brew install node` |
+| `bash` | ✅ | Pre-installed | `brew install bash` (≥ v4) |
+| `tar` | ✅ | Pre-installed | Pre-installed |
+| `zstd` | ✅ | `apt install zstd` | `brew install zstd` |
+| `sha512sum` | ✅ | Part of coreutils | `shasum` pre-installed; or `brew install coreutils` |
+| `numfmt` | ✅ | Part of coreutils | `brew install coreutils` (provides `gnumfmt`) |
+| `gpg` | ✅ | `apt install gnupg` | `brew install gnupg` |
+| `pv` | ✅ | `apt install pv` | `brew install pv` |
+| [tarzst.sh](https://github.com/8r4n/zstar) | ✅ | See repo | See repo |
+
+> **Note:** The MCP server automatically detects macOS and uses platform-appropriate commands (`shasum -a 512` instead of `sha512sum`, `gnumfmt` instead of `numfmt`).
 
 ### Build & Test
 

@@ -228,7 +228,10 @@ describe("zstar MCP server", () => {
       const { execSync } = require("child_process");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-test-"));
       fs.writeFileSync(path.join(tmpDir, "testfile.txt"), "hello world\n");
-      execSync(`sha512sum testfile.txt > testfile.txt.sha512`, { cwd: tmpDir });
+      const checksumCmd = process.platform === "darwin"
+        ? `shasum -a 512 testfile.txt > testfile.txt.sha512`
+        : `sha512sum testfile.txt > testfile.txt.sha512`;
+      execSync(checksumCmd, { cwd: tmpDir });
 
       const result = await client.callTool({
         name: "verify_checksum",
