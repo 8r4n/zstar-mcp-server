@@ -342,6 +342,7 @@ Import a GPG public key from a file into the keyring. Use this to import the oth
 The MCP server includes 4 GPG key management tools that enable an agent to walk users through the complete GPG key setup process — no manual `gpg` commands needed.
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'lineColor': '#e94560', 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eee', 'edgeLabelBackground': '#1a1a2e', 'clusterBkg': '#0d1b2a'}}}%%
 flowchart TD
     A["🔭 1. gpg_list_keys\nCheck existing keys"] --> B{Keys exist?}
     B -->|No| C["🌟 2. gpg_generate_key\nGenerate key pair for user"]
@@ -451,7 +452,7 @@ This scenario demonstrates a full round-trip: the user sends encrypted data to t
 #### How it works
 
 ```mermaid
-%%{init: {'theme': 'dark', 'themeVariables': {'actorBkg': '#1a1a2e', 'actorTextColor': '#53d8fb', 'actorBorder': '#e94560', 'signalColor': '#eee', 'signalTextColor': '#eee', 'noteBkgColor': '#533483', 'noteTextColor': '#eee', 'noteBorderColor': '#e94560', 'sequenceNumberColor': '#f5a623'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#1a1a2e', 'actorTextColor': '#53d8fb', 'actorBorder': '#e94560', 'signalColor': '#e94560', 'signalTextColor': '#c0392b', 'noteBkgColor': '#533483', 'noteTextColor': '#fff', 'noteBorderColor': '#f5a623', 'sequenceNumberColor': '#f5a623', 'actorLineColor': '#533483'}}}%%
 sequenceDiagram
     participant User as 🧑‍🚀 User
     participant Agent as 🤖 Agent (MCP)
@@ -543,6 +544,7 @@ This scenario demonstrates how a user can encrypt sensitive data and selectively
 #### The principle
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'lineColor': '#e94560', 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eee', 'edgeLabelBackground': '#1a1a2e', 'clusterBkg': '#0d1b2a', 'clusterBorder': '#e94560'}}}%%
 graph LR
     subgraph vault["🌌 USER'S DATA VAULT"]
         A["personal-taxes.tar.zst.gpg<br/>🔒 encrypted for user only"]
