@@ -2,6 +2,9 @@ import { execFile, ExecFileOptions } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
+/** Whether the current platform is macOS. */
+const isMacOS = process.platform === "darwin";
+
 /**
  * Result of executing a zstar command.
  */
@@ -295,7 +298,7 @@ export async function verifyChecksum(
     };
   }
   const cwd = options.cwd || path.dirname(checksumPath);
-  if (process.platform === "darwin") {
+  if (isMacOS) {
     return execCommand("shasum", ["-a", "512", "-c", checksumPath], { cwd });
   }
   return execCommand("sha512sum", ["-c", checksumPath], { cwd });
@@ -449,8 +452,6 @@ export async function gpgImportKey(
  * gnumfmt for numfmt) when the standard command is not found.
  */
 export async function checkDependencies(): Promise<DependencyStatus[]> {
-  const isMac = process.platform === "darwin";
-
   const deps: Array<{ name: string; required: boolean; macAlternative?: string }> = [
     { name: "bash", required: true },
     { name: "tar", required: true },
@@ -467,7 +468,7 @@ export async function checkDependencies(): Promise<DependencyStatus[]> {
     let available = result.exitCode === 0;
 
     // On macOS, check for platform-specific alternatives
-    if (!available && isMac && dep.macAlternative) {
+    if (!available && isMacOS && dep.macAlternative) {
       const altResult = await execCommand("which", [dep.macAlternative]);
       available = altResult.exitCode === 0;
     }
