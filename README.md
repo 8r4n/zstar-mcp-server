@@ -71,7 +71,27 @@ export ZSTAR_PATH=/usr/local/bin/tarzst.sh
 
 ### MCP Client Configuration
 
-Add the server to your MCP client configuration. For example, in Claude Desktop's `claude_desktop_config.json`:
+The server communicates over **stdio**, which is the standard transport supported by OpenClaw, Claude Desktop, and other MCP clients.
+
+#### OpenClaw (`openclaw.json`)
+
+Add the server to the `mcpServers` section of your `openclaw.json` (typically at `~/.openclaw/openclaw.json`):
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "npx",
+      "args": ["-y", "zstar-mcp-server"],
+      "env": {
+        "ZSTAR_PATH": "/path/to/tarzst.sh"
+      }
+    }
+  }
+}
+```
+
+Or if installed from source:
 
 ```json
 {
@@ -79,6 +99,22 @@ Add the server to your MCP client configuration. For example, in Claude Desktop'
     "zstar": {
       "command": "node",
       "args": ["/path/to/zstar-mcp-server/dist/index.js"],
+      "env": {
+        "ZSTAR_PATH": "/path/to/tarzst.sh"
+      }
+    }
+  }
+}
+```
+
+#### Claude Desktop (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "npx",
+      "args": ["-y", "zstar-mcp-server"],
       "env": {
         "ZSTAR_PATH": "/path/to/tarzst.sh"
       }
