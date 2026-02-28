@@ -324,16 +324,15 @@ export function createServer(): McpServer {
     },
     async (params) => {
       const result = await zstar.gpgListKeys(params.secretOnly ?? false);
-      const success = result.exitCode === 0;
-      const output = result.stdout.trim() || result.stderr.trim();
-      const isEmpty = !output || output.includes("trustdb created");
+      const output = result.stdout.trim();
+      const hasKeys = output.length > 0 && output.includes("pub") || output.includes("sec");
       return {
         content: [
           {
             type: "text" as const,
-            text: isEmpty
-              ? `No ${params.secretOnly ? "secret " : ""}keys found in the GPG keyring. Use gpg_generate_key to create a new key pair.`
-              : `GPG ${params.secretOnly ? "Secret " : ""}Keys:\n\n${output}`,
+            text: hasKeys
+              ? `GPG ${params.secretOnly ? "Secret " : ""}Keys:\n\n${output}`
+              : `No ${params.secretOnly ? "secret " : ""}keys found in the GPG keyring. Use gpg_generate_key to create a new key pair.`,
           },
         ],
       };
@@ -383,10 +382,7 @@ export function createServer(): McpServer {
         keyLength: params.keyLength,
         expireDate: params.expireDate,
       });
-      const success =
-        result.exitCode === 0 ||
-        result.stderr.includes("key") ||
-        result.stderr.includes("marked as ultimately trusted");
+      const success = result.exitCode === 0;
       const parts: string[] = [];
       parts.push(
         success
