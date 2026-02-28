@@ -5,7 +5,7 @@
 
   <p>
     <strong>MCP server for the <a href="https://github.com/8r4n/zstar">zstar</a> archive utility</strong><br />
-    Compressed, encrypted, and signed tar archives — exposed via the Model Context Protocol.
+    <em>Make your private environment keys go supernova with the self-destructing encrypted archives</em>
   </p>
 
   <p>
@@ -24,6 +24,29 @@
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes all features of the [zstar](https://github.com/8r4n/zstar) archive utility. It allows AI assistants to create, extract, verify, encrypt, and sign compressed archives through a standardized tool interface.
 
 The server uses **stdio transport**, compatible with [OpenClaw](https://github.com/openclaw), [Claude Desktop](https://claude.ai/download), and any other MCP client.
+
+---
+
+### 🛡️ Why zstar MCP Server?
+
+> **Your data. Your keys. Your rules.** AI agents are powerful — but power without guardrails is a liability. The zstar MCP server gives you **cryptographic control** over every byte an agent touches.
+
+**The problem:** AI agents need access to sensitive data — API keys, credentials, financial records, medical files — but handing over raw shell access is a security nightmare. Passphrases end up in shell history, files sit unencrypted on disk, and there's no audit trail for who accessed what.
+
+**The solution:** zstar MCP server wraps battle-tested GPG encryption, zstd compression, and SHA-512 integrity verification into a **structured, auditable tool-call API**. The agent never touches raw `gpg` commands or filesystem internals — it calls typed, validated tools that enforce encryption-by-default.
+
+| 🔑 Capability | What it means for you |
+|---|---|
+| **GPG public-key encryption** | Only *you* can decrypt your data — the agent can't read what you don't authorize |
+| **Signed archives** | Every archive has a verifiable signature — you know exactly who created it |
+| **Self-destructing archives** | Burn-after-reading mode shreds archives after extraction — no residue, no re-access |
+| **SHA-512 integrity** | Automatic checksums on every archive — corruption and tampering are detected instantly |
+| **Zero shell injection** | Structured API with parameter validation — no `; rm -rf /` surprises |
+| **Agent-guided key setup** | GPG key generation, export, and import — all through tool calls, no manual commands |
+
+**The bottom line:** Your private environment keys, credentials, and sensitive data stay encrypted at rest, signed for authenticity, and accessible only to parties you explicitly authorize. When you're done sharing, burn-after-reading ensures the data self-destructs. *That's* how you make your secrets go supernova. 💥
+
+---
 
 ## Tools
 
@@ -320,19 +343,21 @@ The MCP server includes 4 GPG key management tools that enable an agent to walk 
 
 ```mermaid
 flowchart TD
-    A["1. gpg_list_keys\nCheck existing keys"] --> B{Keys exist?}
-    B -->|No| C["2. gpg_generate_key\nGenerate key pair for user"]
-    B -->|Yes| D["3. gpg_export_public_key\nExport user's public key"]
+    A["🔭 1. gpg_list_keys\nCheck existing keys"] --> B{Keys exist?}
+    B -->|No| C["🌟 2. gpg_generate_key\nGenerate key pair for user"]
+    B -->|Yes| D["☄️ 3. gpg_export_public_key\nExport user's public key"]
     C --> D
-    D --> E["Share public key with other party"]
-    E --> F["4. gpg_import_key\nImport other party's public key"]
-    F --> G["✓ Ready for encrypted communication\nUse sign_and_encrypt_archive"]
+    D --> E["🚀 Share public key with other party"]
+    E --> F["🪐 4. gpg_import_key\nImport other party's public key"]
+    F --> G["💫 Ready for encrypted communication\nUse sign_and_encrypt_archive"]
 
-    style A fill:#e1f0ff
-    style C fill:#e1ffe1
-    style D fill:#fff3e1
-    style F fill:#ffe1f0
-    style G fill:#d0f9d0
+    style A fill:#1a1a2e,stroke:#e94560,color:#eee
+    style B fill:#16213e,stroke:#0f3460,color:#eee
+    style C fill:#0f3460,stroke:#53d8fb,color:#eee
+    style D fill:#533483,stroke:#e94560,color:#eee
+    style E fill:#e94560,stroke:#f5a623,color:#fff
+    style F fill:#0f3460,stroke:#53d8fb,color:#eee
+    style G fill:#2d6a4f,stroke:#52b788,color:#eee
 ```
 
 ### Step 1 — Check existing keys
@@ -426,9 +451,10 @@ This scenario demonstrates a full round-trip: the user sends encrypted data to t
 #### How it works
 
 ```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': {'actorBkg': '#1a1a2e', 'actorTextColor': '#53d8fb', 'actorBorder': '#e94560', 'signalColor': '#eee', 'signalTextColor': '#eee', 'noteBkgColor': '#533483', 'noteTextColor': '#eee', 'noteBorderColor': '#e94560', 'sequenceNumberColor': '#f5a623'}}}%%
 sequenceDiagram
-    participant User
-    participant Agent as Agent (MCP)
+    participant User as 🧑‍🚀 User
+    participant Agent as 🤖 Agent (MCP)
 
     User->>Agent: 1. sign_and_encrypt_archive<br/>signed with: user@example.com<br/>encrypted for: agent@mcp-server.local
 
@@ -518,24 +544,26 @@ This scenario demonstrates how a user can encrypt sensitive data and selectively
 
 ```mermaid
 graph LR
-    subgraph vault["USER'S DATA VAULT"]
+    subgraph vault["🌌 USER'S DATA VAULT"]
         A["personal-taxes.tar.zst.gpg<br/>🔒 encrypted for user only"]
         B["medical-records.tar.zst.gpg<br/>🔒 encrypted for user only"]
         C["project-data.tar.zst.gpg<br/>🔓 encrypted for user + agent ✓"]
         D["credentials.tar.zst.gpg<br/>🔒 encrypted for user only"]
     end
 
-    Agent["Agent<br/>agent@mcp-server.local"]
+    Agent["🤖 Agent<br/>agent@mcp-server.local"]
 
     A -.-x Agent
     B -.-x Agent
     C -->|"✓ can decrypt"| Agent
     D -.-x Agent
 
-    style A fill:#f9d0d0
-    style B fill:#f9d0d0
-    style C fill:#d0f9d0
-    style D fill:#f9d0d0
+    style vault fill:#0d1b2a,stroke:#e94560,color:#eee
+    style A fill:#1a1a2e,stroke:#e94560,color:#e94560
+    style B fill:#1a1a2e,stroke:#e94560,color:#e94560
+    style C fill:#0f3460,stroke:#52b788,color:#52b788
+    style D fill:#1a1a2e,stroke:#e94560,color:#e94560
+    style Agent fill:#533483,stroke:#53d8fb,color:#53d8fb
 ```
 
 #### Step 1 — User encrypts private data (agent has NO access)
