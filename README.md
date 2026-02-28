@@ -294,24 +294,18 @@ This scenario demonstrates a full round-trip: the user sends encrypted data to t
 
 #### How it works
 
-```
-┌────────┐                                          ┌────────┐
-│  User  │                                          │  Agent │
-│        │  1. sign_and_encrypt_archive ──────────► │  (MCP) │
-│        │     signed with: user@example.com        │        │
-│        │     encrypted for: agent@mcp-server.local│        │
-│        │                                          │        │
-│        │  2. Agent decrypts with its private key  │        │
-│        │     Agent verifies user's signature      │        │
-│        │     Agent processes the data             │        │
-│        │                                          │        │
-│        │  3. sign_and_encrypt_archive ◄────────── │        │
-│        │     signed with: agent@mcp-server.local  │        │
-│        │     encrypted for: user@example.com      │        │
-│        │                                          │        │
-│        │  4. User decrypts with their private key │        │
-│        │     User verifies agent's signature      │        │
-└────────┘                                          └────────┘
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent as Agent (MCP)
+
+    User->>Agent: 1. sign_and_encrypt_archive<br/>signed with: user@example.com<br/>encrypted for: agent@mcp-server.local
+
+    Note right of Agent: 2. Decrypts with its private key<br/>Verifies user's signature<br/>Processes the data
+
+    Agent->>User: 3. sign_and_encrypt_archive<br/>signed with: agent@mcp-server.local<br/>encrypted for: user@example.com
+
+    Note left of User: 4. Decrypts with their private key<br/>Verifies agent's signature
 ```
 
 #### Step 1 — User sends encrypted data to the agent
@@ -391,18 +385,26 @@ This scenario demonstrates how a user can encrypt sensitive data and selectively
 
 #### The principle
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    USER'S DATA VAULT                             │
-│                                                                  │
-│  personal-taxes.tar.zst.gpg     ← encrypted for user only       │
-│  medical-records.tar.zst.gpg    ← encrypted for user only       │
-│  project-data.tar.zst.gpg       ← encrypted for user + agent ✓  │
-│  credentials.tar.zst.gpg        ← encrypted for user only       │
-│                                                                  │
-│  The agent can ONLY decrypt project-data.tar.zst.gpg because     │
-│  it is the only archive encrypted for agent@mcp-server.local     │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph vault["USER'S DATA VAULT"]
+        A["personal-taxes.tar.zst.gpg<br/>🔒 encrypted for user only"]
+        B["medical-records.tar.zst.gpg<br/>🔒 encrypted for user only"]
+        C["project-data.tar.zst.gpg<br/>🔓 encrypted for user + agent ✓"]
+        D["credentials.tar.zst.gpg<br/>🔒 encrypted for user only"]
+    end
+
+    Agent["Agent<br/>agent@mcp-server.local"]
+
+    A -.-x Agent
+    B -.-x Agent
+    C -->|"✓ can decrypt"| Agent
+    D -.-x Agent
+
+    style A fill:#f9d0d0
+    style B fill:#f9d0d0
+    style C fill:#d0f9d0
+    style D fill:#f9d0d0
 ```
 
 #### Step 1 — User encrypts private data (agent has NO access)
