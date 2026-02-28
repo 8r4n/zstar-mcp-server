@@ -109,41 +109,45 @@ describe("OpenClaw integration (stdio transport)", () => {
 
     it("verify_checksum succeeds with a valid checksum file", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-test-"));
-      fs.writeFileSync(path.join(tmpDir, "data.bin"), "openclaw test data\n");
-      execSync("sha512sum data.bin > data.bin.sha512", { cwd: tmpDir });
+      try {
+        fs.writeFileSync(path.join(tmpDir, "data.bin"), "openclaw test data\n");
+        execSync("sha512sum data.bin > data.bin.sha512", { cwd: tmpDir });
 
-      const result = await client.callTool({
-        name: "verify_checksum",
-        arguments: {
-          checksumFile: path.join(tmpDir, "data.bin.sha512"),
-          cwd: tmpDir,
-        },
-      });
+        const result = await client.callTool({
+          name: "verify_checksum",
+          arguments: {
+            checksumFile: path.join(tmpDir, "data.bin.sha512"),
+            cwd: tmpDir,
+          },
+        });
 
-      const text = (result.content[0] as { type: string; text: string }).text;
-      expect(text).toContain("SUCCESS");
-
-      fs.rmSync(tmpDir, { recursive: true });
+        const text = (result.content[0] as { type: string; text: string }).text;
+        expect(text).toContain("SUCCESS");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
     });
 
     it("verify_checksum detects a corrupted file", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-test-"));
-      fs.writeFileSync(path.join(tmpDir, "data.bin"), "original\n");
-      execSync("sha512sum data.bin > data.bin.sha512", { cwd: tmpDir });
-      fs.writeFileSync(path.join(tmpDir, "data.bin"), "tampered\n");
+      try {
+        fs.writeFileSync(path.join(tmpDir, "data.bin"), "original\n");
+        execSync("sha512sum data.bin > data.bin.sha512", { cwd: tmpDir });
+        fs.writeFileSync(path.join(tmpDir, "data.bin"), "tampered\n");
 
-      const result = await client.callTool({
-        name: "verify_checksum",
-        arguments: {
-          checksumFile: path.join(tmpDir, "data.bin.sha512"),
-          cwd: tmpDir,
-        },
-      });
+        const result = await client.callTool({
+          name: "verify_checksum",
+          arguments: {
+            checksumFile: path.join(tmpDir, "data.bin.sha512"),
+            cwd: tmpDir,
+          },
+        });
 
-      const text = (result.content[0] as { type: string; text: string }).text;
-      expect(text).toContain("FAILED");
-
-      fs.rmSync(tmpDir, { recursive: true });
+        const text = (result.content[0] as { type: string; text: string }).text;
+        expect(text).toContain("FAILED");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
     });
   });
 
