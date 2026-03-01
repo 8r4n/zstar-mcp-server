@@ -753,6 +753,24 @@ USDC accepted on the **Ethereum** network:
 
 ---
 
+## 🌟 Sponsors
+
+*Your name here — [become a Stardust Supporter](https://github.com/sponsors/8r4n) ($5/mo or more)*
+
+<!-- sponsors -->
+<!-- sponsors -->
+
+---
+
+## 💥 Sponsor Logos
+
+*Your logo here — [become a Supernova Patron](https://github.com/sponsors/8r4n) ($50/mo)*
+
+<!-- sponsor-logos -->
+<!-- sponsor-logos -->
+
+---
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
