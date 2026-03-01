@@ -11,9 +11,11 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
       zstd \
       coreutils-single \
       gnupg2 \
-      pv \
       nmap-ncat \
       jq \
+    && rpm -ivh https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+    && microdnf install -y --nodocs --setopt=install_weak_deps=0 pv \
+    && rpm -e epel-release \
     && ln -sf /usr/bin/ncat /usr/bin/nc \
     && microdnf clean all \
     && rm -rf /var/cache/yum
