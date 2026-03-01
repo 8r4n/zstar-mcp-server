@@ -11,6 +11,7 @@
   <p>
     <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
     <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node.js >= 18" /></a>
+    <a href="https://ghcr.io/8r4n/zstar-mcp-server"><img src="https://img.shields.io/badge/ghcr.io-Docker-blue.svg" alt="Docker (GHCR)" /></a>
     <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet.svg" alt="MCP Compatible" /></a>
     <a href="#openclaw-openclawjson"><img src="https://img.shields.io/badge/OpenClaw-supported-orange.svg" alt="OpenClaw Supported" /></a>
     <a href="https://github.com/8r4n/zstar"><img src="https://img.shields.io/badge/zstar-tarzst.sh-yellow.svg" alt="zstar" /></a>
@@ -78,7 +79,25 @@ The server provides **20 tools** covering every capability of the zstar utility 
 
 ## Quick Start
 
-### Installation
+### Docker (recommended)
+
+Pull the pre-built image from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/8r4n/zstar-mcp-server:latest
+```
+
+Or build locally:
+
+```bash
+git clone --recurse-submodules https://github.com/8r4n/zstar-mcp-server.git
+cd zstar-mcp-server
+docker build -t zstar-mcp-server .
+```
+
+The Docker image is built on **Red Hat UBI 9 Minimal** — a hardened, SELinux-native base image with a minimal attack surface. All dependencies (`bash`, `tar`, `zstd`, `gpg`, `pv`, `ncat`, `jq`) and `tarzst.sh` are bundled — no additional setup required.
+
+### npm
 
 ```bash
 npm install zstar-mcp-server
@@ -87,7 +106,7 @@ npm install zstar-mcp-server
 Or clone and build from source:
 
 ```bash
-git clone https://github.com/8r4n/zstar-mcp-server.git
+git clone --recurse-submodules https://github.com/8r4n/zstar-mcp-server.git
 cd zstar-mcp-server
 npm install
 npm run build
@@ -104,13 +123,56 @@ The server locates the `tarzst.sh` script in the following order:
 export ZSTAR_PATH=/usr/local/bin/tarzst.sh
 ```
 
+> **Note:** The Docker image sets `ZSTAR_PATH` automatically — no configuration needed.
+
 ## Client Configuration
 
-The server communicates over **stdio**, the standard transport supported by OpenClaw, Claude Desktop, and other MCP clients.
+The server communicates over **stdio**, the standard transport supported by OpenClaw, Claude Desktop, and any other MCP client.
 
-### OpenClaw (`openclaw.json`)
+### Docker
 
-Add the server to the `mcpServers` section of your `openclaw.json` (typically at `~/.openclaw/openclaw.json`):
+#### OpenClaw (`openclaw.json`)
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "ghcr.io/8r4n/zstar-mcp-server:latest"]
+    }
+  }
+}
+```
+
+#### Claude Desktop (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "ghcr.io/8r4n/zstar-mcp-server:latest"]
+    }
+  }
+}
+```
+
+To mount a local directory for archive operations, add a volume mount:
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-v", "/path/to/data:/data", "ghcr.io/8r4n/zstar-mcp-server:latest"]
+    }
+  }
+}
+```
+
+### npm
+
+#### OpenClaw (`openclaw.json`)
 
 ```json
 {
@@ -142,7 +204,7 @@ Or if installed from source:
 }
 ```
 
-### Claude Desktop (`claude_desktop_config.json`)
+#### Claude Desktop (`claude_desktop_config.json`)
 
 ```json
 {
@@ -160,7 +222,13 @@ Or if installed from source:
 
 ## Usage
 
-Start the server directly (it communicates over stdio):
+### Docker
+
+```bash
+docker run --rm -i ghcr.io/8r4n/zstar-mcp-server:latest
+```
+
+### Node.js
 
 ```bash
 node dist/index.js
@@ -786,6 +854,251 @@ The server turns GPG-based encryption from a manual, error-prone process into a 
 
 ---
 
+### SELinux Mandatory Access Control for Agent Confinement
+
+When the agentic framework is deployed on a host with **SELinux** enabled and configured so that all file access is routed through the MCP server, the kernel-enforced mandatory access control (MAC) provides an additional security boundary that restricts **what data the agent can read on the host** — regardless of what the agent's application-level code attempts.
+
+#### How it works
+
+The zstar project includes a ready-to-use SELinux policy module ([`zstar/selinux/`](zstar/selinux/)) that defines three security types:
+
+| SELinux Type | Purpose |
+|-------------|---------|
+| `zstar_mcp_t` | **Process domain** — the security context the MCP server runs under |
+| `zstar_archive_t` | **File type** — the label applied to archives, checksums, decompress scripts, and split parts |
+| `zstar_exec_t` | **Entrypoint type** — the label on the MCP server executable, triggering automatic domain transition into `zstar_mcp_t` |
+
+When the MCP server is launched, SELinux transitions it into the `zstar_mcp_t` domain. The policy then **explicitly allows** only the operations the server needs and **denies everything else by default**:
+
+```
+# The MCP server (zstar_mcp_t) can ONLY access files labeled zstar_archive_t
+allow zstar_mcp_t zstar_archive_t:file { create read write open ... };
+allow zstar_mcp_t zstar_archive_t:dir  { search read write ... };
+
+# System utilities required by tarzst.sh (tar, zstd, gpg, etc.)
+corecmd_exec_bin(zstar_mcp_t)
+corecmd_exec_shell(zstar_mcp_t)
+
+# GPG keyring access
+gpg_entry_type(zstar_mcp_t)
+
+# Stdio transport (inherited file descriptors from the MCP client)
+allow zstar_mcp_t self:fifo_file { read write getattr };
+
+# Everything else → DENIED (implicit SELinux default)
+```
+
+#### What the agent cannot do
+
+Because SELinux policy is enforced **in the kernel**, even if the agent compromises or manipulates the MCP server process, it **cannot**:
+
+| Blocked Action | Why |
+|---------------|-----|
+| Read `/etc/shadow`, SSH keys, or any user file not labeled `zstar_archive_t` | No `allow` rule for `zstar_mcp_t` to access `user_home_t`, `etc_t`, `ssh_home_t`, etc. |
+| Write to arbitrary directories | Only `zstar_archive_t`-labeled directories are writable |
+| Execute arbitrary binaries | Only `corecmd_exec_bin` (system `/usr/bin`) is allowed — not user scripts |
+| Access other processes' memory or files | No `allow` rule for `zstar_mcp_t` to `ptrace` or read other domains |
+| Escalate privileges | No `allow` rule for role or domain transitions beyond the defined policy |
+| Disable or modify the SELinux policy | Policy management requires `semanage`/`setsebool` in the `unconfined_t` domain |
+
+#### File context labeling
+
+The file contexts configuration (`zstar.fc`) automatically labels zstar output artifacts with `zstar_archive_t`:
+
+```
+/home/[^/]+/.*\.tar\.zst              → zstar_archive_t
+/home/[^/]+/.*\.tar\.zst\.gpg         → zstar_archive_t
+/home/[^/]+/.*\.tar\.zst\.sha512      → zstar_archive_t
+/home/[^/]+/.*_decompress\.sh         → zstar_archive_t
+/home/[^/]+/.*\.tar\.zst\.[0-9]+\.part → zstar_archive_t
+```
+
+This means that when a user creates an archive, the resulting files are automatically labeled for MCP server access. All other files on the host — documents, credentials, configuration files, SSH keys — remain in their default SELinux contexts and are **invisible to the MCP server process**.
+
+#### Deployment architecture
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'lineColor': '#e94560', 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eee', 'edgeLabelBackground': '#1a1a2e', 'clusterBkg': '#0d1b2a', 'clusterBorder': '#e94560'}}}%%
+flowchart TB
+    subgraph host["🖥️ Host — SELinux Enforcing"]
+        subgraph agent_domain["🤖 Agentic Framework"]
+            A["AI Agent\n(MCP Client)"]
+        end
+
+        subgraph mcp_domain["🔒 zstar_mcp_t Domain"]
+            M["zstar MCP Server\n(mcp-server.sh)"]
+        end
+
+        subgraph files["📁 Filesystem"]
+            F1["🔓 zstar_archive_t\n.tar.zst, .sha512,\n_decompress.sh"]
+            F2["🚫 user_home_t\nDocuments, configs,\nSSH keys, secrets"]
+            F3["🚫 etc_t\n/etc/shadow,\n/etc/passwd"]
+        end
+    end
+
+    A -->|"stdio\n(JSON-RPC)"| M
+    M -->|"✅ allowed"| F1
+    M -.->|"❌ denied\n(AVC)"| F2
+    M -.->|"❌ denied\n(AVC)"| F3
+
+    style host fill:#0d1b2a,stroke:#e94560,color:#eee
+    style agent_domain fill:#1a1a2e,stroke:#53d8fb,color:#eee
+    style mcp_domain fill:#1a1a2e,stroke:#e94560,color:#eee
+    style files fill:#1a1a2e,stroke:#53d8fb,color:#eee
+    style A fill:#0f3460,stroke:#53d8fb,color:#eee
+    style M fill:#533483,stroke:#e94560,color:#eee
+    style F1 fill:#2d6a4f,stroke:#52b788,color:#eee
+    style F2 fill:#3d0000,stroke:#e94560,color:#eee
+    style F3 fill:#3d0000,stroke:#e94560,color:#eee
+```
+
+#### Policy interfaces for integration
+
+The `zstar.if` interface file provides reusable policy macros for integrating with other SELinux-confined applications:
+
+| Interface | Description |
+|-----------|-------------|
+| `zstar_read_archive` | Grant a domain **read-only** access to `zstar_archive_t` files |
+| `zstar_manage_archive` | Grant a domain **full** (create/read/write/delete) access to `zstar_archive_t` files |
+
+For example, if a separate deployment agent needs to read archives produced by the MCP server but should not create new ones:
+
+```
+# In the deployment agent's .te policy:
+zstar_read_archive(deploy_agent_t)
+```
+
+#### Installing the SELinux policy
+
+```bash
+# Build and install the policy module
+cd zstar/selinux
+make -f /usr/share/selinux/devel/Makefile zstar.pp
+sudo semodule -i zstar.pp
+
+# Apply file contexts to existing files
+sudo restorecon -Rv /home/*/
+```
+
+> **Note:** The SELinux policy works with both the Docker-based bash server and the Node.js/npm server. The Docker image is built on Red Hat UBI 9 Minimal — a hardened, SELinux-native base image. For Docker deployments, the container process inherits the host's SELinux enforcement when the Docker daemon is configured with `--selinux-enabled`.
+
+---
+
+### Quickstart: OpenClaw with Docker-Only Host Access Restriction
+
+This guide configures OpenClaw to use the Docker-based zstar MCP server as the **sole file access mechanism**, preventing the agent from reading or writing arbitrary files on the host.
+
+#### 1. Pull the hardened image
+
+```bash
+docker pull ghcr.io/8r4n/zstar-mcp-server:latest
+```
+
+#### 2. Create a dedicated data directory
+
+Create a single directory that the agent is allowed to access. No other host path will be mounted:
+
+```bash
+mkdir -p ~/zstar-data
+```
+
+On SELinux-enabled hosts, label it so the confined MCP server process can access it:
+
+```bash
+sudo semanage fcontext -a -t zstar_archive_t "$HOME/zstar-data(/.*)?"
+sudo restorecon -Rv ~/zstar-data
+```
+
+#### 3. Configure OpenClaw
+
+Create or edit `openclaw.json` with the zstar server as the **only** MCP server — no filesystem, shell, or other tools:
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--read-only",
+        "--tmpfs", "/tmp",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "-v", "/home/you/zstar-data:/data",
+        "ghcr.io/8r4n/zstar-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+Replace `/home/you/zstar-data` with the absolute path to your data directory.
+
+> **Key flags:**
+> - `--read-only` — container filesystem is immutable (prevents tampering with server binaries)
+> - `--tmpfs /tmp` — writable scratch space for GPG operations and temp files (ephemeral, never touches the host)
+> - `--cap-drop=ALL` — drops all Linux capabilities (no privilege escalation)
+> - `--security-opt=no-new-privileges` — prevents `setuid`/`setgid` escalation inside the container
+> - Only `/data` is mounted — the agent cannot access any other host path
+
+#### 4. What the agent can and cannot do
+
+| Action | Allowed | Why |
+|--------|---------|-----|
+| Create archives in `/data` | ✅ | Mounted volume |
+| Extract archives in `/data` | ✅ | Mounted volume |
+| Verify checksums in `/data` | ✅ | Mounted volume |
+| Encrypt/sign archives in `/data` | ✅ | Mounted volume |
+| Stream archives over the network | ✅ | Network streaming tools |
+| Read `/etc/shadow`, SSH keys, user files | ❌ | Not mounted into container |
+| Write outside `/data` | ❌ | Read-only filesystem + no other mounts |
+| Execute host binaries | ❌ | Container isolation |
+| Escalate privileges | ❌ | `--cap-drop=ALL` + `no-new-privileges` |
+
+#### 5. Verify isolation
+
+Start OpenClaw and ask the agent to create an archive:
+
+```
+Create a zstar archive of /data/myfiles
+```
+
+Then verify the agent **cannot** access anything outside `/data`:
+
+```
+List files in /etc
+```
+
+The agent will fail — it has no tool to list files, and the MCP server has no access to `/etc`.
+
+#### 6. Add SELinux enforcement (RHEL/Fedora)
+
+On SELinux-enforcing hosts, add `--security-opt label=type:zstar_mcp_t` to the Docker args for kernel-level MAC enforcement:
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--read-only",
+        "--tmpfs", "/tmp",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--security-opt", "label=type:zstar_mcp_t",
+        "-v", "/home/you/zstar-data:/data:Z",
+        "ghcr.io/8r4n/zstar-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+The `:Z` volume suffix tells Docker to relabel the mount with the correct SELinux context. Combined with the `zstar_mcp_t` process domain, the kernel enforces that even if the container is compromised, only `zstar_archive_t`-labeled files are accessible.
+
+---
+
 ## Use Case: Two AI Agents Streaming Compressed, GPG-Encrypted Data in Real Time
 
 A common deployment pattern involves two AI agents — each running their own MCP client — that need to exchange data securely over a network in real time. For example:
@@ -1049,6 +1362,8 @@ After this exchange, both agents have each other's keys and can use `encrypted_a
 
 ## Development
 
+### Node.js (TypeScript)
+
 ```bash
 npm install       # Install dependencies
 npm run build     # Build TypeScript
@@ -1056,15 +1371,25 @@ npm test          # Run all tests
 npm run test:watch # Run tests in watch mode
 ```
 
+### Docker
+
+```bash
+git clone --recurse-submodules https://github.com/8r4n/zstar-mcp-server.git
+cd zstar-mcp-server
+docker build -t zstar-mcp-server .
+docker run --rm -i zstar-mcp-server
+```
+
 ## Testing
 
-The project includes **96 tests** using [Vitest](https://vitest.dev/):
+The project includes **123 tests** using [Vitest](https://vitest.dev/):
 
 | Suite | File | Tests | Description |
 |-------|------|-------|-------------|
 | Unit | `test/zstar.test.ts` | 44 | Tests the zstar wrapper module directly (including GPG key functions, agent communication, secure channel requests, network streaming validation, and end-to-end agent key exchange) |
-| MCP Integration | `test/server.test.ts` | 38 | Tests the server via `InMemoryTransport` (all 20 tools, schema validation, error handling, and end-to-end agent-to-agent key exchange workflow) |
-| OpenClaw Integration | `test/openclaw.test.ts` | 14 | End-to-end tests over stdio via `StdioClientTransport` |
+| MCP Integration | `test/server.test.ts` | 38 | Tests the TypeScript server via `InMemoryTransport` (all 20 tools, schema validation, error handling, and end-to-end agent-to-agent key exchange workflow) |
+| OpenClaw Integration | `test/openclaw.test.ts` | 14 | End-to-end tests over stdio via `StdioClientTransport` (TypeScript server) |
+| Bash Server | `test/bash-server.test.ts` | 27 | End-to-end tests over stdio via `StdioClientTransport` (bash server — same implementation used in Docker) |
 
 Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, agent-to-agent communication initialization, secure channel requests, encrypted streaming validation, network streaming target validation, end-to-end agent key exchange with bidirectional communication, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
 
@@ -1074,24 +1399,24 @@ Tests cover tool registration, schema validation, dependency checking, checksum 
 
 The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be installed. The following system tools are required:
 
-| Dependency | Required | Linux | macOS (via Homebrew) |
+| Dependency | Required | Linux (RHEL/Fedora) | macOS (via Homebrew) |
 |-----------|----------|-------|------|
 | `bash` | ✅ | Version ≥ 4.0 | `brew install bash` (macOS ships v3) |
 | `tar` | ✅ | Pre-installed | Pre-installed |
-| `zstd` | ✅ | `apt install zstd` | `brew install zstd` |
+| `zstd` | ✅ | `dnf install zstd` | `brew install zstd` |
 | `sha512sum` | ✅ | Part of coreutils | `shasum -a 512` (pre-installed); or `brew install coreutils` |
 | `numfmt` | ✅ | Part of coreutils | `brew install coreutils` (provides `gnumfmt`) |
-| `gpg` | ✅ | `apt install gnupg` | `brew install gnupg` |
-| `pv` | ✅ | `apt install pv` | `brew install pv` |
-| `nc` | ⬡ Optional | Pre-installed (or `apt install netcat`) | Pre-installed |
+| `gpg` | ✅ | `dnf install gnupg2` | `brew install gnupg` |
+| `pv` | ✅ | `dnf install pv` | `brew install pv` |
+| `nc` | ⬡ Optional | `dnf install nmap-ncat` | Pre-installed |
 
 > **Note:** `nc` (netcat) is only required for network streaming tools (`net_stream_archive`, `net_stream_encrypted_archive`, `net_stream_signed_encrypted_archive`, `listen_for_stream`) and agent-to-agent encrypted streaming (`encrypted_agent_stream`). All other tools work without it.
 
 #### Quick install
 
-**Linux (Debian/Ubuntu):**
+**Linux (RHEL/Fedora/CentOS):**
 ```bash
-sudo apt install bash tar zstd coreutils gnupg pv
+sudo dnf install bash tar zstd coreutils gnupg2 pv
 ```
 
 **macOS (Homebrew):**
@@ -1100,10 +1425,13 @@ brew install bash zstd coreutils gnupg pv
 ```
 
 > **Note:** The MCP server automatically detects macOS and uses platform-appropriate commands (`shasum -a 512` instead of `sha512sum`, `gnumfmt` instead of `numfmt`). No manual aliasing is needed.
+>
+> **Docker users:** All dependencies are pre-installed in the hardened Red Hat UBI 9 Docker image — no manual setup required.
 
 ### Runtime
 
-- **Node.js** ≥ 18
+- **Docker** (recommended) — hardened Red Hat UBI 9 image with all dependencies bundled
+- **Node.js** ≥ 18 (for npm-based installation)
 
 ## 💖 Sponsorship
 

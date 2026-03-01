@@ -1,0 +1,3 @@
+[submodule "zstar"]
+	path = zstar
+	url = https://github.com/8r4n/zstar.git
