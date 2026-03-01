@@ -1,19 +1,22 @@
-FROM ubuntu:24.04
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 LABEL org.opencontainers.image.source="https://github.com/8r4n/zstar-mcp-server"
-LABEL org.opencontainers.image.description="MCP server for the zstar archive utility — compressed, encrypted, signed tar archives"
+LABEL org.opencontainers.image.description="MCP server for the zstar archive utility — compressed, encrypted, signed tar archives (hardened Red Hat UBI 9 base)"
 LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/ubi-minimal"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
       bash \
       tar \
       zstd \
-      coreutils \
-      gnupg \
+      coreutils-single \
+      gnupg2 \
       pv \
-      netcat-openbsd \
+      nmap-ncat \
       jq \
-    && rm -rf /var/lib/apt/lists/*
+    && ln -sf /usr/bin/ncat /usr/bin/nc \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum
 
 COPY zstar/tarzst-project/tarzst.sh /usr/local/bin/tarzst.sh
 RUN chmod +x /usr/local/bin/tarzst.sh

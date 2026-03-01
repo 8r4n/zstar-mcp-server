@@ -95,7 +95,7 @@ cd zstar-mcp-server
 docker build -t zstar-mcp-server .
 ```
 
-The Docker image includes all dependencies (`bash`, `tar`, `zstd`, `gpg`, `pv`, `nc`, `jq`) and `tarzst.sh` — no additional setup required.
+The Docker image is built on **Red Hat UBI 9 Minimal** — a hardened, SELinux-native base image with a minimal attack surface. All dependencies (`bash`, `tar`, `zstd`, `gpg`, `pv`, `ncat`, `jq`) and `tarzst.sh` are bundled — no additional setup required.
 
 ### npm
 
@@ -980,7 +980,7 @@ sudo semodule -i zstar.pp
 sudo restorecon -Rv /home/*/
 ```
 
-> **Note:** The SELinux policy works with both the Docker-based bash server and the Node.js/npm server. For Docker deployments, the container process inherits the host's SELinux enforcement when the Docker daemon is configured with `--selinux-enabled`.
+> **Note:** The SELinux policy works with both the Docker-based bash server and the Node.js/npm server. The Docker image is built on Red Hat UBI 9 Minimal — a hardened, SELinux-native base image. For Docker deployments, the container process inherits the host's SELinux enforcement when the Docker daemon is configured with `--selinux-enabled`.
 
 ---
 
@@ -1284,24 +1284,24 @@ Tests cover tool registration, schema validation, dependency checking, checksum 
 
 The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be installed. The following system tools are required:
 
-| Dependency | Required | Linux | macOS (via Homebrew) |
+| Dependency | Required | Linux (RHEL/Fedora) | macOS (via Homebrew) |
 |-----------|----------|-------|------|
 | `bash` | ✅ | Version ≥ 4.0 | `brew install bash` (macOS ships v3) |
 | `tar` | ✅ | Pre-installed | Pre-installed |
-| `zstd` | ✅ | `apt install zstd` | `brew install zstd` |
+| `zstd` | ✅ | `dnf install zstd` | `brew install zstd` |
 | `sha512sum` | ✅ | Part of coreutils | `shasum -a 512` (pre-installed); or `brew install coreutils` |
 | `numfmt` | ✅ | Part of coreutils | `brew install coreutils` (provides `gnumfmt`) |
-| `gpg` | ✅ | `apt install gnupg` | `brew install gnupg` |
-| `pv` | ✅ | `apt install pv` | `brew install pv` |
-| `nc` | ⬡ Optional | Pre-installed (or `apt install netcat`) | Pre-installed |
+| `gpg` | ✅ | `dnf install gnupg2` | `brew install gnupg` |
+| `pv` | ✅ | `dnf install pv` | `brew install pv` |
+| `nc` | ⬡ Optional | `dnf install nmap-ncat` | Pre-installed |
 
 > **Note:** `nc` (netcat) is only required for network streaming tools (`net_stream_archive`, `net_stream_encrypted_archive`, `net_stream_signed_encrypted_archive`, `listen_for_stream`) and agent-to-agent encrypted streaming (`encrypted_agent_stream`). All other tools work without it.
 
 #### Quick install
 
-**Linux (Debian/Ubuntu):**
+**Linux (RHEL/Fedora/CentOS):**
 ```bash
-sudo apt install bash tar zstd coreutils gnupg pv
+sudo dnf install bash tar zstd coreutils gnupg2 pv
 ```
 
 **macOS (Homebrew):**
@@ -1311,11 +1311,11 @@ brew install bash zstd coreutils gnupg pv
 
 > **Note:** The MCP server automatically detects macOS and uses platform-appropriate commands (`shasum -a 512` instead of `sha512sum`, `gnumfmt` instead of `numfmt`). No manual aliasing is needed.
 >
-> **Docker users:** All dependencies are pre-installed in the Docker image — no manual setup required.
+> **Docker users:** All dependencies are pre-installed in the hardened Red Hat UBI 9 Docker image — no manual setup required.
 
 ### Runtime
 
-- **Docker** (recommended) — all dependencies bundled
+- **Docker** (recommended) — hardened Red Hat UBI 9 image with all dependencies bundled
 - **Node.js** ≥ 18 (for npm-based installation)
 
 ## 💖 Sponsorship
