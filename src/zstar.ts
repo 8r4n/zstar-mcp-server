@@ -57,6 +57,46 @@ export interface SignAndEncryptArchiveOptions extends SignArchiveOptions {
 }
 
 /**
+ * Options for streaming an archive to a network destination.
+ */
+export interface NetStreamOptions extends CreateArchiveOptions {
+  /** Network destination in host:port format (e.g., "remote_host:9000"). */
+  target: string;
+}
+
+/**
+ * Options for streaming a password-encrypted archive to a network destination.
+ */
+export interface NetStreamEncryptedOptions extends NetStreamOptions {
+  /** Symmetric encryption password. */
+  password: string;
+}
+
+/**
+ * Options for streaming a signed and recipient-encrypted archive to a network destination.
+ */
+export interface NetStreamSignedEncryptedOptions extends NetStreamOptions {
+  /** GPG key ID for signing (e.g., email or key fingerprint). */
+  signingKeyId: string;
+  /** Passphrase for the signing key. */
+  passphrase: string;
+  /** GPG key ID of the recipient for encryption. */
+  recipientKeyId: string;
+}
+
+/**
+ * Options for listening for incoming streamed data using a decompress script.
+ */
+export interface ListenForStreamOptions {
+  /** Path to the generated decompress script. */
+  scriptPath: string;
+  /** Port number to listen on (1-65535). */
+  port: number;
+  /** Working directory. */
+  cwd?: string;
+}
+
+/**
  * Options for decompressing/extracting an archive.
  */
 export interface ExtractArchiveOptions {
@@ -246,6 +286,113 @@ export async function createBurnAfterReadingArchive(
   const script = findZstarScript();
   const args = ["-b", ...buildCreateArgs(options)];
   return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Validate a network streaming target in host:port format.
+ * Returns null if valid, or an error message string if invalid.
+ *
+ * Validation rules (matching tarzst.sh):
+ * - Exactly one ':' separator
+ * - Hostname restricted to [a-zA-Z0-9._-]
+ * - Port must be numeric, in range 1-65535
+ * - No whitespace allowed
+ */
+export function validateNetStreamTarget(target: string): string | null {
+  if (/\s/.test(target)) {
+    return "Network target must not contain whitespace.";
+  }
+  const parts = target.split(":");
+  if (parts.length !== 2) {
+    return "Network target must be in host:port format with exactly one ':' separator.";
+  }
+  const [host, portStr] = parts;
+  if (!host || !/^[a-zA-Z0-9._-]+$/.test(host)) {
+    return "Hostname must contain only alphanumeric characters, dots, underscores, and hyphens.";
+  }
+  if (!/^\d+$/.test(portStr)) {
+    return "Port must be a numeric value.";
+  }
+  const port = parseInt(portStr, 10);
+  if (port < 1 || port > 65535) {
+    return "Port must be in the range 1-65535.";
+  }
+  return null;
+}
+
+/**
+ * Stream a compressed archive directly to a network destination via netcat.
+ * No archive file, checksum, or decompress script is written to disk.
+ */
+export async function netStreamArchive(
+  options: NetStreamOptions
+): Promise<ZstarResult> {
+  const validationError = validateNetStreamTarget(options.target);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+  const script = findZstarScript();
+  const args = ["-n", options.target, ...buildCreateArgs(options)];
+  return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Stream a password-encrypted compressed archive to a network destination.
+ */
+export async function netStreamEncryptedArchive(
+  options: NetStreamEncryptedOptions
+): Promise<ZstarResult> {
+  const validationError = validateNetStreamTarget(options.target);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+  const script = findZstarScript();
+  const args = ["-p", "-n", options.target, ...buildCreateArgs(options)];
+  return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Stream a signed and recipient-encrypted archive to a network destination.
+ */
+export async function netStreamSignedEncryptedArchive(
+  options: NetStreamSignedEncryptedOptions
+): Promise<ZstarResult> {
+  const validationError = validateNetStreamTarget(options.target);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+  const script = findZstarScript();
+  const args = [
+    "-s", options.signingKeyId,
+    "-r", options.recipientKeyId,
+    "-n", options.target,
+    ...buildCreateArgs(options),
+  ];
+  return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Listen for incoming streamed data using a decompress script's listen mode.
+ * The decompress script's `listen <port>` subcommand receives, decrypts (if applicable),
+ * decompresses, and extracts streamed data in real-time.
+ */
+export async function listenForStream(
+  options: ListenForStreamOptions
+): Promise<ZstarResult> {
+  if (options.port < 1 || options.port > 65535) {
+    return { stdout: "", stderr: "Port must be in the range 1-65535.", exitCode: 2 };
+  }
+  const scriptPath = path.resolve(options.cwd || ".", options.scriptPath);
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      stdout: "",
+      stderr: `Decompress script not found: ${scriptPath}`,
+      exitCode: 1,
+    };
+  }
+  return execCommand("bash", [scriptPath, "listen", String(options.port)], {
+    cwd: options.cwd,
+  });
 }
 
 /**
@@ -460,6 +607,7 @@ export async function checkDependencies(): Promise<DependencyStatus[]> {
     { name: "numfmt", required: true, macAlternative: "gnumfmt" },
     { name: "gpg", required: true },
     { name: "pv", required: true },
+    { name: "nc", required: false },
   ];
 
   const results: DependencyStatus[] = [];

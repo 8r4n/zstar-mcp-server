@@ -54,7 +54,7 @@ describe("OpenClaw integration (stdio transport)", () => {
   // --- Tool discovery --------------------------------------------------------
 
   describe("tool discovery", () => {
-    it("lists all 13 zstar tools", async () => {
+    it("lists all 17 zstar tools", async () => {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name);
 
@@ -67,11 +67,15 @@ describe("OpenClaw integration (stdio transport)", () => {
       expect(names).toContain("list_archive");
       expect(names).toContain("verify_checksum");
       expect(names).toContain("check_dependencies");
+      expect(names).toContain("net_stream_archive");
+      expect(names).toContain("net_stream_encrypted_archive");
+      expect(names).toContain("net_stream_signed_encrypted_archive");
+      expect(names).toContain("listen_for_stream");
       expect(names).toContain("gpg_list_keys");
       expect(names).toContain("gpg_generate_key");
       expect(names).toContain("gpg_export_public_key");
       expect(names).toContain("gpg_import_key");
-      expect(tools.length).toBe(13);
+      expect(tools.length).toBe(17);
     });
 
     it("every tool has a non-empty description", async () => {
@@ -108,6 +112,7 @@ describe("OpenClaw integration (stdio transport)", () => {
       expect(text).toContain("sha512sum");
       expect(text).toContain("gpg");
       expect(text).toContain("pv");
+      expect(text).toContain("nc");
       expect(text).toContain("Dependency Check Results:");
     });
 
@@ -190,6 +195,34 @@ describe("OpenClaw integration (stdio transport)", () => {
       const result = await client.callTool({
         name: "list_archive",
         arguments: { scriptPath: "/nonexistent/decompress.sh" },
+      });
+
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("not found");
+    });
+
+    it("net_stream_archive returns FAILED for invalid target format", async () => {
+      const result = await client.callTool({
+        name: "net_stream_archive",
+        arguments: {
+          inputPaths: ["/tmp"],
+          target: "no-port-here",
+        },
+      });
+
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("host:port");
+    });
+
+    it("listen_for_stream returns FAILED for nonexistent script", async () => {
+      const result = await client.callTool({
+        name: "listen_for_stream",
+        arguments: {
+          scriptPath: "/nonexistent/decompress.sh",
+          port: 9000,
+        },
       });
 
       const text = (result.content[0] as { type: string; text: string }).text;

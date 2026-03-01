@@ -285,7 +285,7 @@ export function createServer(): McpServer {
   // --- Tool: check_dependencies ---
   server.tool(
     "check_dependencies",
-    "Check whether all required system dependencies for zstar are installed (bash, tar, zstd, sha512sum, numfmt, gpg, pv). On macOS, automatically detects platform alternatives (shasum for sha512sum, gnumfmt for numfmt).",
+    "Check whether all required system dependencies for zstar are installed (bash, tar, zstd, sha512sum, numfmt, gpg, pv) and optional dependencies (nc for network streaming). On macOS, automatically detects platform alternatives (shasum for sha512sum, gnumfmt for numfmt).",
     {},
     async () => {
       const deps = await zstar.checkDependencies();
@@ -307,6 +307,182 @@ export function createServer(): McpServer {
           },
         ],
       };
+    }
+  );
+
+  // --- Tool: net_stream_archive ---
+  server.tool(
+    "net_stream_archive",
+    "Stream a compressed archive directly to a remote host via netcat (nc), bypassing all disk I/O. No archive file, checksum, or decompress script is written to disk. Requires nc (netcat) installed on both sender and receiver.",
+    {
+      inputPaths: z
+        .array(z.string())
+        .min(1)
+        .describe("Files or directories to archive and stream"),
+      target: z
+        .string()
+        .min(1)
+        .describe(
+          "Network destination in host:port format (e.g., 'remote_host:9000'). Hostname must contain only alphanumeric characters, dots, underscores, and hyphens. Port must be 1-65535."
+        ),
+      compressionLevel: z
+        .number()
+        .int()
+        .min(1)
+        .max(19)
+        .optional()
+        .describe("zstd compression level (1-19). Default: 3"),
+      outputName: z
+        .string()
+        .optional()
+        .describe("Custom base name (used for stream identification)"),
+      excludePatterns: z
+        .array(z.string())
+        .optional()
+        .describe("File exclusion patterns for tar"),
+      cwd: z.string().optional().describe("Working directory for the command"),
+    },
+    async (params) => {
+      const result = await zstar.netStreamArchive({
+        inputPaths: params.inputPaths,
+        target: params.target,
+        compressionLevel: params.compressionLevel,
+        outputName: params.outputName,
+        excludePatterns: params.excludePatterns,
+        cwd: params.cwd,
+      });
+      return formatResult(result, "Network stream");
+    }
+  );
+
+  // --- Tool: net_stream_encrypted_archive ---
+  server.tool(
+    "net_stream_encrypted_archive",
+    "Stream a password-encrypted (AES-256 symmetric) compressed archive directly to a remote host via netcat. No files are written to disk. The receiver needs the same password to decrypt.",
+    {
+      inputPaths: z
+        .array(z.string())
+        .min(1)
+        .describe("Files or directories to archive and stream"),
+      target: z
+        .string()
+        .min(1)
+        .describe(
+          "Network destination in host:port format (e.g., 'remote_host:9000')"
+        ),
+      password: z.string().min(1).describe("Symmetric encryption password"),
+      compressionLevel: z
+        .number()
+        .int()
+        .min(1)
+        .max(19)
+        .optional()
+        .describe("zstd compression level (1-19). Default: 3"),
+      outputName: z
+        .string()
+        .optional()
+        .describe("Custom base name (used for stream identification)"),
+      excludePatterns: z
+        .array(z.string())
+        .optional()
+        .describe("File exclusion patterns for tar"),
+      cwd: z.string().optional().describe("Working directory for the command"),
+    },
+    async (params) => {
+      const result = await zstar.netStreamEncryptedArchive({
+        inputPaths: params.inputPaths,
+        target: params.target,
+        password: params.password,
+        compressionLevel: params.compressionLevel,
+        outputName: params.outputName,
+        excludePatterns: params.excludePatterns,
+        cwd: params.cwd,
+      });
+      return formatResult(result, "Encrypted network stream");
+    }
+  );
+
+  // --- Tool: net_stream_signed_encrypted_archive ---
+  server.tool(
+    "net_stream_signed_encrypted_archive",
+    "Stream a GPG-signed and recipient-encrypted compressed archive directly to a remote host via netcat. Uses asymmetric encryption — the sender signs with their private key and encrypts for the recipient's public key. No files are written to disk.",
+    {
+      inputPaths: z
+        .array(z.string())
+        .min(1)
+        .describe("Files or directories to archive and stream"),
+      target: z
+        .string()
+        .min(1)
+        .describe(
+          "Network destination in host:port format (e.g., 'remote_host:9000')"
+        ),
+      signingKeyId: z
+        .string()
+        .min(1)
+        .describe("GPG key ID for signing (e.g., email or fingerprint)"),
+      passphrase: z.string().min(1).describe("Passphrase for the signing key"),
+      recipientKeyId: z
+        .string()
+        .min(1)
+        .describe("GPG key ID of the recipient for encryption"),
+      compressionLevel: z
+        .number()
+        .int()
+        .min(1)
+        .max(19)
+        .optional()
+        .describe("zstd compression level (1-19). Default: 3"),
+      outputName: z
+        .string()
+        .optional()
+        .describe("Custom base name (used for stream identification)"),
+      excludePatterns: z
+        .array(z.string())
+        .optional()
+        .describe("File exclusion patterns for tar"),
+      cwd: z.string().optional().describe("Working directory for the command"),
+    },
+    async (params) => {
+      const result = await zstar.netStreamSignedEncryptedArchive({
+        inputPaths: params.inputPaths,
+        target: params.target,
+        signingKeyId: params.signingKeyId,
+        passphrase: params.passphrase,
+        recipientKeyId: params.recipientKeyId,
+        compressionLevel: params.compressionLevel,
+        outputName: params.outputName,
+        excludePatterns: params.excludePatterns,
+        cwd: params.cwd,
+      });
+      return formatResult(result, "Signed encrypted network stream");
+    }
+  );
+
+  // --- Tool: listen_for_stream ---
+  server.tool(
+    "listen_for_stream",
+    "Listen for incoming streamed data using a decompress script's listen mode. The decompress script receives, decrypts (if applicable), decompresses, and extracts streamed data in real-time. Requires nc (netcat) installed. Start this before the sender streams data.",
+    {
+      scriptPath: z
+        .string()
+        .min(1)
+        .describe("Path to the generated *_decompress.sh script"),
+      port: z
+        .number()
+        .int()
+        .min(1)
+        .max(65535)
+        .describe("Port number to listen on (1-65535)"),
+      cwd: z.string().optional().describe("Working directory"),
+    },
+    async (params) => {
+      const result = await zstar.listenForStream({
+        scriptPath: params.scriptPath,
+        port: params.port,
+        cwd: params.cwd,
+      });
+      return formatResult(result, "Stream listener");
     }
   );
 
