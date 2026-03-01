@@ -24,6 +24,10 @@
     "url": "https://github.com/8r4n/zstar-mcp-server/issues"
   },
   "homepage": "https://github.com/8r4n/zstar-mcp-server#readme",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/8r4n"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^4.3.6"
