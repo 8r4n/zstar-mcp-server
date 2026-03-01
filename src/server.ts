@@ -486,6 +486,144 @@ export function createServer(): McpServer {
     }
   );
 
+  // --- Tool: gpg_init_agent_communication ---
+  server.tool(
+    "gpg_init_agent_communication",
+    "Initialize GPG identity for encrypted agent-to-agent communication. Generates a GPG key pair for the local agent (if not already present) and exports the public key. This is the first step in establishing a secure channel between two agents. Share the exported public key with the remote agent.",
+    {
+      agentName: z
+        .string()
+        .min(1)
+        .describe(
+          "Display name for the agent (e.g., 'Agent Alpha' or 'Build Server')"
+        ),
+      agentEmail: z
+        .string()
+        .min(1)
+        .describe(
+          "Email identifier for the agent (e.g., 'agent-alpha@mcp-server.local')"
+        ),
+      passphrase: z
+        .string()
+        .min(1)
+        .describe("Passphrase to protect the agent's private key"),
+      keyType: z
+        .enum(["RSA", "DSA", "EDDSA"])
+        .optional()
+        .describe("Key type. Default: EDDSA (modern, fast)"),
+      keyLength: z
+        .number()
+        .int()
+        .min(1024)
+        .max(4096)
+        .optional()
+        .describe("Key length in bits (for RSA/DSA). Default: 4096"),
+      expireDate: z
+        .string()
+        .optional()
+        .describe(
+          "Key expiry (e.g., '1y' for 1 year, '0' for no expiry). Default: '0'"
+        ),
+      outputFile: z
+        .string()
+        .optional()
+        .describe(
+          "File path to save the exported public key (e.g., './agent_alpha_public.asc'). If omitted, the armored key is returned directly."
+        ),
+    },
+    async (params) => {
+      const result = await zstar.gpgInitAgentCommunication({
+        agentName: params.agentName,
+        agentEmail: params.agentEmail,
+        passphrase: params.passphrase,
+        keyType: params.keyType,
+        keyLength: params.keyLength,
+        expireDate: params.expireDate,
+        outputFile: params.outputFile,
+      });
+
+      const parts: string[] = [];
+      parts.push(
+        result.success
+          ? "Agent GPG communication initialized successfully."
+          : "Agent GPG communication initialization FAILED."
+      );
+      parts.push(`\n${result.details}`);
+
+      if (result.success && result.publicKey) {
+        parts.push(`\nPublic Key:\n${result.publicKey}`);
+      }
+
+      return {
+        content: [{ type: "text" as const, text: parts.join("\n") }],
+      };
+    }
+  );
+
+  // --- Tool: encrypted_agent_stream ---
+  server.tool(
+    "encrypted_agent_stream",
+    "Stream GPG-signed and encrypted data directly from one agent to another over the network. Validates that both agents have each other's keys, then streams a signed + recipient-encrypted compressed archive via netcat. The sender signs with their private key and encrypts for the recipient's public key. Requires prior key exchange via gpg_init_agent_communication.",
+    {
+      inputPaths: z
+        .array(z.string())
+        .min(1)
+        .describe("Files or directories to archive and stream to the remote agent"),
+      target: z
+        .string()
+        .min(1)
+        .describe(
+          "Remote agent's network address in host:port format (e.g., 'agent-b-host:9000')"
+        ),
+      signingKeyId: z
+        .string()
+        .min(1)
+        .describe(
+          "Local agent's GPG key ID for signing (e.g., 'agent-alpha@mcp-server.local')"
+        ),
+      passphrase: z
+        .string()
+        .min(1)
+        .describe("Passphrase for the local agent's signing key"),
+      recipientKeyId: z
+        .string()
+        .min(1)
+        .describe(
+          "Remote agent's GPG key ID for encryption (e.g., 'agent-beta@mcp-server.local')"
+        ),
+      compressionLevel: z
+        .number()
+        .int()
+        .min(1)
+        .max(19)
+        .optional()
+        .describe("zstd compression level (1-19). Default: 3"),
+      outputName: z
+        .string()
+        .optional()
+        .describe("Custom base name for stream identification"),
+      excludePatterns: z
+        .array(z.string())
+        .optional()
+        .describe("File exclusion patterns for tar"),
+      cwd: z.string().optional().describe("Working directory for the command"),
+    },
+    async (params) => {
+      const result = await zstar.encryptedAgentStream({
+        inputPaths: params.inputPaths,
+        target: params.target,
+        signingKeyId: params.signingKeyId,
+        passphrase: params.passphrase,
+        recipientKeyId: params.recipientKeyId,
+        compressionLevel: params.compressionLevel,
+        outputName: params.outputName,
+        excludePatterns: params.excludePatterns,
+        cwd: params.cwd,
+      });
+      return formatResult(result, "Encrypted agent-to-agent stream");
+    }
+  );
+
   // --- Tool: gpg_list_keys ---
   server.tool(
     "gpg_list_keys",

@@ -389,4 +389,112 @@ describe("zstar module", () => {
       expect(result.stderr).toContain("1-65535");
     });
   });
+
+  describe("gpgInitAgentCommunication", () => {
+    it("returns a result object with expected fields", async () => {
+      const result = await zstar.gpgInitAgentCommunication({
+        agentName: "Test Agent",
+        agentEmail: `test-init-${Date.now()}@zstar-test.local`,
+        passphrase: "test-passphrase",
+        keyType: "EDDSA",
+      });
+      // Result should have the expected shape regardless of success/failure
+      expect(typeof result.success).toBe("boolean");
+      expect(typeof result.publicKey).toBe("string");
+      expect(typeof result.fingerprint).toBe("string");
+      expect(typeof result.details).toBe("string");
+    });
+
+    it("generates key and exports public key on success", async () => {
+      const email = `agent-init-${Date.now()}@zstar-test.local`;
+      const result = await zstar.gpgInitAgentCommunication({
+        agentName: "Init Test Agent",
+        agentEmail: email,
+        passphrase: "test-passphrase-123",
+        keyType: "EDDSA",
+      });
+      expect(result.success).toBe(true);
+      expect(result.fingerprint.length).toBeGreaterThan(0);
+      expect(result.details).toContain(email);
+      expect(result.details).toContain("Fingerprint:");
+      expect(result.details).toContain("agent-to-agent setup");
+      // Public key should be returned when no output file specified
+      if (result.publicKey) {
+        expect(result.publicKey).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+      }
+    });
+
+    it("reuses existing key if already generated for the email", async () => {
+      const email = `agent-reuse-${Date.now()}@zstar-test.local`;
+      // First call: generate key
+      const first = await zstar.gpgInitAgentCommunication({
+        agentName: "Reuse Agent",
+        agentEmail: email,
+        passphrase: "reuse-pass",
+        keyType: "EDDSA",
+      });
+      expect(first.success).toBe(true);
+
+      // Second call: should reuse existing key
+      const second = await zstar.gpgInitAgentCommunication({
+        agentName: "Reuse Agent",
+        agentEmail: email,
+        passphrase: "reuse-pass",
+        keyType: "EDDSA",
+      });
+      expect(second.success).toBe(true);
+      expect(second.details).toContain("already exists");
+      expect(second.fingerprint).toBe(first.fingerprint);
+    });
+  });
+
+  describe("encryptedAgentStream", () => {
+    it("returns validation error for invalid target", async () => {
+      const result = await zstar.encryptedAgentStream({
+        inputPaths: ["/tmp"],
+        target: "invalid-no-port",
+        signingKeyId: "sender@test.local",
+        passphrase: "pass",
+        recipientKeyId: "recipient@test.local",
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("host:port");
+    });
+
+    it("returns error when signing key does not exist", async () => {
+      const result = await zstar.encryptedAgentStream({
+        inputPaths: ["/tmp"],
+        target: "localhost:9000",
+        signingKeyId: "nonexistent-sender@test.local",
+        passphrase: "pass",
+        recipientKeyId: "nonexistent-recipient@test.local",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Signing key not found");
+      expect(result.stderr).toContain("gpg_init_agent_communication");
+    });
+
+    it("returns error when recipient key does not exist", async () => {
+      // First generate a signing key so we get past the first check
+      const signerEmail = `stream-signer-${Date.now()}@zstar-test.local`;
+      const initResult = await zstar.gpgInitAgentCommunication({
+        agentName: "Stream Signer",
+        agentEmail: signerEmail,
+        passphrase: "signer-pass",
+        keyType: "EDDSA",
+      });
+      expect(initResult.success).toBe(true);
+
+      const result = await zstar.encryptedAgentStream({
+        inputPaths: ["/tmp"],
+        target: "localhost:9000",
+        signingKeyId: signerEmail,
+        passphrase: "signer-pass",
+        recipientKeyId: "nonexistent-recipient@test.local",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Recipient key not found");
+      expect(result.stderr).toContain("gpg_import_key");
+    });
+  });
 });

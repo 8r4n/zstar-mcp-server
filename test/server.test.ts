@@ -45,11 +45,13 @@ describe("zstar MCP server", () => {
       expect(toolNames).toContain("net_stream_encrypted_archive");
       expect(toolNames).toContain("net_stream_signed_encrypted_archive");
       expect(toolNames).toContain("listen_for_stream");
+      expect(toolNames).toContain("gpg_init_agent_communication");
+      expect(toolNames).toContain("encrypted_agent_stream");
       expect(toolNames).toContain("gpg_list_keys");
       expect(toolNames).toContain("gpg_generate_key");
       expect(toolNames).toContain("gpg_export_public_key");
       expect(toolNames).toContain("gpg_import_key");
-      expect(tools.length).toBe(17);
+      expect(tools.length).toBe(19);
     });
 
     it("each tool has a description", async () => {
@@ -231,6 +233,41 @@ describe("zstar MCP server", () => {
       expect(required).toContain("scriptPath");
       expect(required).toContain("port");
     });
+
+    it("gpg_init_agent_communication requires agentName, agentEmail, and passphrase", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "gpg_init_agent_communication");
+      expect(tool).toBeDefined();
+      const props = tool!.inputSchema.properties as Record<string, unknown>;
+      expect(props).toHaveProperty("agentName");
+      expect(props).toHaveProperty("agentEmail");
+      expect(props).toHaveProperty("passphrase");
+      expect(props).toHaveProperty("keyType");
+      expect(props).toHaveProperty("outputFile");
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("agentName");
+      expect(required).toContain("agentEmail");
+      expect(required).toContain("passphrase");
+    });
+
+    it("encrypted_agent_stream requires inputPaths, target, signing and recipient keys", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "encrypted_agent_stream");
+      expect(tool).toBeDefined();
+      const props = tool!.inputSchema.properties as Record<string, unknown>;
+      expect(props).toHaveProperty("inputPaths");
+      expect(props).toHaveProperty("target");
+      expect(props).toHaveProperty("signingKeyId");
+      expect(props).toHaveProperty("passphrase");
+      expect(props).toHaveProperty("recipientKeyId");
+      expect(props).toHaveProperty("compressionLevel");
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("inputPaths");
+      expect(required).toContain("target");
+      expect(required).toContain("signingKeyId");
+      expect(required).toContain("passphrase");
+      expect(required).toContain("recipientKeyId");
+    });
   });
 
   describe("tool execution", () => {
@@ -388,6 +425,38 @@ describe("zstar MCP server", () => {
       });
       const text = (result.content[0] as { type: string; text: string }).text;
       expect(text).toContain("nc");
+    });
+
+    it("encrypted_agent_stream returns validation error for invalid target", async () => {
+      const result = await client.callTool({
+        name: "encrypted_agent_stream",
+        arguments: {
+          inputPaths: ["/tmp"],
+          target: "invalid-target",
+          signingKeyId: "sender@example.com",
+          passphrase: "pass",
+          recipientKeyId: "recipient@example.com",
+        },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("host:port");
+    });
+
+    it("encrypted_agent_stream returns error when signing key is missing", async () => {
+      const result = await client.callTool({
+        name: "encrypted_agent_stream",
+        arguments: {
+          inputPaths: ["/tmp"],
+          target: "localhost:9000",
+          signingKeyId: "nonexistent-agent@test.local",
+          passphrase: "pass",
+          recipientKeyId: "other-agent@test.local",
+        },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("Signing key not found");
     });
   });
 });
