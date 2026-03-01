@@ -639,7 +639,7 @@ export function createServer(): McpServer {
     async (params) => {
       const result = await zstar.gpgListKeys(params.secretOnly ?? false);
       const output = result.stdout.trim();
-      const hasKeys = output.length > 0 && output.includes("pub") || output.includes("sec");
+      const hasKeys = output.length > 0 && (output.includes("pub") || output.includes("sec"));
       return {
         content: [
           {
