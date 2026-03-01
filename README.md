@@ -854,6 +854,136 @@ The server turns GPG-based encryption from a manual, error-prone process into a 
 
 ---
 
+### SELinux Mandatory Access Control for Agent Confinement
+
+When the agentic framework is deployed on a host with **SELinux** enabled and configured so that all file access is routed through the MCP server, the kernel-enforced mandatory access control (MAC) provides an additional security boundary that restricts **what data the agent can read on the host** — regardless of what the agent's application-level code attempts.
+
+#### How it works
+
+The zstar project includes a ready-to-use SELinux policy module ([`zstar/selinux/`](zstar/selinux/)) that defines three security types:
+
+| SELinux Type | Purpose |
+|-------------|---------|
+| `zstar_mcp_t` | **Process domain** — the security context the MCP server runs under |
+| `zstar_archive_t` | **File type** — the label applied to archives, checksums, decompress scripts, and split parts |
+| `zstar_exec_t` | **Entrypoint type** — the label on the MCP server executable, triggering automatic domain transition into `zstar_mcp_t` |
+
+When the MCP server is launched, SELinux transitions it into the `zstar_mcp_t` domain. The policy then **explicitly allows** only the operations the server needs and **denies everything else by default**:
+
+```
+# The MCP server (zstar_mcp_t) can ONLY access files labeled zstar_archive_t
+allow zstar_mcp_t zstar_archive_t:file { create read write open ... };
+allow zstar_mcp_t zstar_archive_t:dir  { search read write ... };
+
+# System utilities required by tarzst.sh (tar, zstd, gpg, etc.)
+corecmd_exec_bin(zstar_mcp_t)
+corecmd_exec_shell(zstar_mcp_t)
+
+# GPG keyring access
+gpg_entry_type(zstar_mcp_t)
+
+# Stdio transport (inherited file descriptors from the MCP client)
+allow zstar_mcp_t self:fifo_file { read write getattr };
+
+# Everything else → DENIED (implicit SELinux default)
+```
+
+#### What the agent cannot do
+
+Because SELinux policy is enforced **in the kernel**, even if the agent compromises or manipulates the MCP server process, it **cannot**:
+
+| Blocked Action | Why |
+|---------------|-----|
+| Read `/etc/shadow`, SSH keys, or any user file not labeled `zstar_archive_t` | No `allow` rule for `zstar_mcp_t` to access `user_home_t`, `etc_t`, `ssh_home_t`, etc. |
+| Write to arbitrary directories | Only `zstar_archive_t`-labeled directories are writable |
+| Execute arbitrary binaries | Only `corecmd_exec_bin` (system `/usr/bin`) is allowed — not user scripts |
+| Access other processes' memory or files | No `allow` rule for `zstar_mcp_t` to `ptrace` or read other domains |
+| Escalate privileges | No `allow` rule for role or domain transitions beyond the defined policy |
+| Disable or modify the SELinux policy | Policy management requires `semanage`/`setsebool` in the `unconfined_t` domain |
+
+#### File context labeling
+
+The file contexts configuration (`zstar.fc`) automatically labels zstar output artifacts with `zstar_archive_t`:
+
+```
+/home/[^/]+/.*\.tar\.zst              → zstar_archive_t
+/home/[^/]+/.*\.tar\.zst\.gpg         → zstar_archive_t
+/home/[^/]+/.*\.tar\.zst\.sha512      → zstar_archive_t
+/home/[^/]+/.*_decompress\.sh         → zstar_archive_t
+/home/[^/]+/.*\.tar\.zst\.[0-9]+\.part → zstar_archive_t
+```
+
+This means that when a user creates an archive, the resulting files are automatically labeled for MCP server access. All other files on the host — documents, credentials, configuration files, SSH keys — remain in their default SELinux contexts and are **invisible to the MCP server process**.
+
+#### Deployment architecture
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'lineColor': '#e94560', 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eee', 'edgeLabelBackground': '#1a1a2e', 'clusterBkg': '#0d1b2a', 'clusterBorder': '#e94560'}}}%%
+flowchart TB
+    subgraph host["🖥️ Host — SELinux Enforcing"]
+        subgraph agent_domain["🤖 Agentic Framework"]
+            A["AI Agent\n(MCP Client)"]
+        end
+
+        subgraph mcp_domain["🔒 zstar_mcp_t Domain"]
+            M["zstar MCP Server\n(mcp-server.sh)"]
+        end
+
+        subgraph files["📁 Filesystem"]
+            F1["🔓 zstar_archive_t\n.tar.zst, .sha512,\n_decompress.sh"]
+            F2["🚫 user_home_t\nDocuments, configs,\nSSH keys, secrets"]
+            F3["🚫 etc_t\n/etc/shadow,\n/etc/passwd"]
+        end
+    end
+
+    A -->|"stdio\n(JSON-RPC)"| M
+    M -->|"✅ allowed"| F1
+    M -.->|"❌ denied\n(AVC)"| F2
+    M -.->|"❌ denied\n(AVC)"| F3
+
+    style host fill:#0d1b2a,stroke:#e94560,color:#eee
+    style agent_domain fill:#1a1a2e,stroke:#53d8fb,color:#eee
+    style mcp_domain fill:#1a1a2e,stroke:#e94560,color:#eee
+    style files fill:#1a1a2e,stroke:#53d8fb,color:#eee
+    style A fill:#0f3460,stroke:#53d8fb,color:#eee
+    style M fill:#533483,stroke:#e94560,color:#eee
+    style F1 fill:#2d6a4f,stroke:#52b788,color:#eee
+    style F2 fill:#3d0000,stroke:#e94560,color:#eee
+    style F3 fill:#3d0000,stroke:#e94560,color:#eee
+```
+
+#### Policy interfaces for integration
+
+The `zstar.if` interface file provides reusable policy macros for integrating with other SELinux-confined applications:
+
+| Interface | Description |
+|-----------|-------------|
+| `zstar_read_archive` | Grant a domain **read-only** access to `zstar_archive_t` files |
+| `zstar_manage_archive` | Grant a domain **full** (create/read/write/delete) access to `zstar_archive_t` files |
+
+For example, if a separate deployment agent needs to read archives produced by the MCP server but should not create new ones:
+
+```
+# In the deployment agent's .te policy:
+zstar_read_archive(deploy_agent_t)
+```
+
+#### Installing the SELinux policy
+
+```bash
+# Build and install the policy module
+cd zstar/selinux
+make -f /usr/share/selinux/devel/Makefile zstar.pp
+sudo semodule -i zstar.pp
+
+# Apply file contexts to existing files
+sudo restorecon -Rv /home/*/
+```
+
+> **Note:** The SELinux policy works with both the Docker-based bash server and the Node.js/npm server. For Docker deployments, the container process inherits the host's SELinux enforcement when the Docker daemon is configured with `--selinux-enabled`.
+
+---
+
 ## Use Case: Two AI Agents Streaming Compressed, GPG-Encrypted Data in Real Time
 
 A common deployment pattern involves two AI agents — each running their own MCP client — that need to exchange data securely over a network in real time. For example:
