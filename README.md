@@ -48,6 +48,12 @@ The server uses **stdio transport**, compatible with [OpenClaw](https://github.c
 
 **The bottom line:** Your private environment keys, credentials, and sensitive data stay encrypted at rest, signed for authenticity, and accessible only to parties you explicitly authorize. When you're done sharing, burn-after-reading ensures the data self-destructs. *That's* how you make your secrets go supernova. 💥
 
+### 🎬 Data Protection Demo
+
+<p align="center">
+  <img src="assets/demo-data-protection.gif" alt="zstar MCP Server — Data Protection Demo" width="850" />
+</p>
+
 ---
 
 ## Tools
