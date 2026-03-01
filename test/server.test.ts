@@ -47,11 +47,12 @@ describe("zstar MCP server", () => {
       expect(toolNames).toContain("listen_for_stream");
       expect(toolNames).toContain("gpg_init_agent_communication");
       expect(toolNames).toContain("encrypted_agent_stream");
+      expect(toolNames).toContain("request_secure_channel");
       expect(toolNames).toContain("gpg_list_keys");
       expect(toolNames).toContain("gpg_generate_key");
       expect(toolNames).toContain("gpg_export_public_key");
       expect(toolNames).toContain("gpg_import_key");
-      expect(tools.length).toBe(19);
+      expect(tools.length).toBe(20);
     });
 
     it("each tool has a description", async () => {
@@ -267,6 +268,22 @@ describe("zstar MCP server", () => {
       expect(required).toContain("signingKeyId");
       expect(required).toContain("passphrase");
       expect(required).toContain("recipientKeyId");
+    });
+
+    it("request_secure_channel requires agentName, agentEmail, and passphrase", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "request_secure_channel");
+      expect(tool).toBeDefined();
+      const props = tool!.inputSchema.properties as Record<string, unknown>;
+      expect(props).toHaveProperty("agentName");
+      expect(props).toHaveProperty("agentEmail");
+      expect(props).toHaveProperty("passphrase");
+      expect(props).toHaveProperty("keyType");
+      expect(props).toHaveProperty("listeningAddress");
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("agentName");
+      expect(required).toContain("agentEmail");
+      expect(required).toContain("passphrase");
     });
   });
 
@@ -551,6 +568,39 @@ describe("zstar MCP server", () => {
       } finally {
         fs.rmSync(tmpDir, { recursive: true });
       }
+    });
+
+    it("request_secure_channel generates request successfully", async () => {
+      const email = `mcp-channel-${Date.now()}@zstar-test.local`;
+      const result = await client.callTool({
+        name: "request_secure_channel",
+        arguments: {
+          agentName: "Channel Requester",
+          agentEmail: email,
+          passphrase: "channel-pass",
+          listeningAddress: "requester-host:9000",
+        },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("generated successfully");
+      expect(text).toContain("gpg_import_key");
+      expect(text).toContain("gpg_init_agent_communication");
+      expect(text).toContain("requester-host:9000");
+    });
+
+    it("request_secure_channel returns error for invalid listening address", async () => {
+      const result = await client.callTool({
+        name: "request_secure_channel",
+        arguments: {
+          agentName: "Bad Address Agent",
+          agentEmail: `bad-addr-${Date.now()}@zstar-test.local`,
+          passphrase: "pass",
+          listeningAddress: "invalid-no-port",
+        },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("Invalid listening address");
     });
   });
 });

@@ -637,4 +637,68 @@ describe("zstar module", () => {
       }
     });
   });
+
+  describe("requestSecureChannel", () => {
+    it("returns a result object with expected fields", async () => {
+      const result = await zstar.requestSecureChannel({
+        agentName: "Channel Test Agent",
+        agentEmail: `channel-test-${Date.now()}@zstar-test.local`,
+        passphrase: "channel-passphrase",
+        keyType: "EDDSA",
+      });
+      expect(typeof result.success).toBe("boolean");
+      expect(typeof result.publicKey).toBe("string");
+      expect(typeof result.fingerprint).toBe("string");
+      expect(typeof result.agentName).toBe("string");
+      expect(typeof result.agentEmail).toBe("string");
+      expect(typeof result.instructions).toBe("string");
+      expect(typeof result.details).toBe("string");
+    });
+
+    it("generates secure channel request with public key on success", async () => {
+      const email = `channel-gen-${Date.now()}@zstar-test.local`;
+      const result = await zstar.requestSecureChannel({
+        agentName: "Channel Gen Agent",
+        agentEmail: email,
+        passphrase: "gen-passphrase",
+        keyType: "EDDSA",
+      });
+      expect(result.success).toBe(true);
+      expect(result.fingerprint.length).toBeGreaterThan(0);
+      expect(result.agentName).toBe("Channel Gen Agent");
+      expect(result.agentEmail).toBe(email);
+      expect(result.instructions).toContain("gpg_import_key");
+      expect(result.instructions).toContain("gpg_init_agent_communication");
+      expect(result.instructions).toContain("encrypted_agent_stream");
+      if (result.publicKey) {
+        expect(result.publicKey).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+      }
+    });
+
+    it("includes listening address in request when provided", async () => {
+      const email = `channel-listen-${Date.now()}@zstar-test.local`;
+      const result = await zstar.requestSecureChannel({
+        agentName: "Listening Agent",
+        agentEmail: email,
+        passphrase: "listen-pass",
+        keyType: "EDDSA",
+        listeningAddress: "agent-host:9000",
+      });
+      expect(result.success).toBe(true);
+      expect(result.listeningAddress).toBe("agent-host:9000");
+      expect(result.details).toContain("agent-host:9000");
+      expect(result.instructions).toContain("agent-host:9000");
+    });
+
+    it("returns validation error for invalid listening address", async () => {
+      const result = await zstar.requestSecureChannel({
+        agentName: "Invalid Agent",
+        agentEmail: `invalid-${Date.now()}@zstar-test.local`,
+        passphrase: "pass",
+        listeningAddress: "bad-address",
+      });
+      expect(result.success).toBe(false);
+      expect(result.details).toContain("Invalid listening address");
+    });
+  });
 });
