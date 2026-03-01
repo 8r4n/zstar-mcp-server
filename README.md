@@ -741,6 +741,16 @@ zstar MCP Server is a free, open-source project maintained in spare time. Sponso
 
 Sponsor via **[GitHub Sponsors](https://github.com/sponsors/8r4n)** or **[Ko-fi](https://ko-fi.com/8r4n)**. Even a one-time coffee keeps the project caffeinated ☕.
 
+### Crypto donations
+
+USDC accepted on the **Ethereum** network:
+
+```
+0xa1a808Bf8999a054839167d6C7E7cf689798E8B4
+```
+
+> ⚠️ **Ethereum network only.** Do not send USDC over any other network to this address or your funds may be lost.
+
 ---
 
 ## Contributing
