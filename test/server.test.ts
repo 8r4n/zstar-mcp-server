@@ -47,11 +47,12 @@ describe("zstar MCP server", () => {
       expect(toolNames).toContain("listen_for_stream");
       expect(toolNames).toContain("gpg_init_agent_communication");
       expect(toolNames).toContain("encrypted_agent_stream");
+      expect(toolNames).toContain("request_secure_channel");
       expect(toolNames).toContain("gpg_list_keys");
       expect(toolNames).toContain("gpg_generate_key");
       expect(toolNames).toContain("gpg_export_public_key");
       expect(toolNames).toContain("gpg_import_key");
-      expect(tools.length).toBe(19);
+      expect(tools.length).toBe(20);
     });
 
     it("each tool has a description", async () => {
@@ -268,6 +269,22 @@ describe("zstar MCP server", () => {
       expect(required).toContain("passphrase");
       expect(required).toContain("recipientKeyId");
     });
+
+    it("request_secure_channel requires agentName, agentEmail, and passphrase", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "request_secure_channel");
+      expect(tool).toBeDefined();
+      const props = tool!.inputSchema.properties as Record<string, unknown>;
+      expect(props).toHaveProperty("agentName");
+      expect(props).toHaveProperty("agentEmail");
+      expect(props).toHaveProperty("passphrase");
+      expect(props).toHaveProperty("keyType");
+      expect(props).toHaveProperty("listeningAddress");
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("agentName");
+      expect(required).toContain("agentEmail");
+      expect(required).toContain("passphrase");
+    });
   });
 
   describe("tool execution", () => {
@@ -457,6 +474,133 @@ describe("zstar MCP server", () => {
       const text = (result.content[0] as { type: string; text: string }).text;
       expect(text).toContain("FAILED");
       expect(text).toContain("Signing key not found");
+    });
+
+    it("agent-to-agent key exchange and encrypted stream validation (end-to-end)", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-mcp-a2a-"));
+
+      const alphaEmail = `mcp-alpha-${Date.now()}@zstar-test.local`;
+      const betaEmail = `mcp-beta-${Date.now()}@zstar-test.local`;
+
+      try {
+        // Phase 1: Both agents initialize GPG identities via MCP tools
+        const alphaInit = await client.callTool({
+          name: "gpg_init_agent_communication",
+          arguments: {
+            agentName: "MCP Alpha",
+            agentEmail: alphaEmail,
+            passphrase: "alpha-mcp-pass",
+          },
+        });
+        const alphaText = (alphaInit.content[0] as { type: string; text: string }).text;
+        expect(alphaText).toContain("initialized successfully");
+
+        const betaInit = await client.callTool({
+          name: "gpg_init_agent_communication",
+          arguments: {
+            agentName: "MCP Beta",
+            agentEmail: betaEmail,
+            passphrase: "beta-mcp-pass",
+          },
+        });
+        const betaText = (betaInit.content[0] as { type: string; text: string }).text;
+        expect(betaText).toContain("initialized successfully");
+
+        // Phase 2: Export keys via gpg_export_public_key and import via gpg_import_key
+        const alphaExport = await client.callTool({
+          name: "gpg_export_public_key",
+          arguments: { keyId: alphaEmail },
+        });
+        const alphaExportText = (alphaExport.content[0] as { type: string; text: string }).text;
+        expect(alphaExportText).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+
+        const betaExport = await client.callTool({
+          name: "gpg_export_public_key",
+          arguments: { keyId: betaEmail },
+        });
+        const betaExportText = (betaExport.content[0] as { type: string; text: string }).text;
+        expect(betaExportText).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+
+        // Write keys to files for import
+        const alphaKeyFile = path.join(tmpDir, "alpha_public.asc");
+        const betaKeyFile = path.join(tmpDir, "beta_public.asc");
+        // Extract the PGP block from the export output
+        const extractPgpBlock = (text: string) => {
+          const start = text.indexOf("-----BEGIN PGP PUBLIC KEY BLOCK-----");
+          const end = text.indexOf("-----END PGP PUBLIC KEY BLOCK-----");
+          return text.substring(start, end + "-----END PGP PUBLIC KEY BLOCK-----".length);
+        };
+        fs.writeFileSync(alphaKeyFile, extractPgpBlock(alphaExportText));
+        fs.writeFileSync(betaKeyFile, extractPgpBlock(betaExportText));
+
+        const alphaImport = await client.callTool({
+          name: "gpg_import_key",
+          arguments: { keyFile: betaKeyFile },
+        });
+        const alphaImportText = (alphaImport.content[0] as { type: string; text: string }).text;
+        expect(alphaImportText).toContain("imported successfully");
+
+        const betaImport = await client.callTool({
+          name: "gpg_import_key",
+          arguments: { keyFile: alphaKeyFile },
+        });
+        const betaImportText = (betaImport.content[0] as { type: string; text: string }).text;
+        expect(betaImportText).toContain("imported successfully");
+
+        // Phase 3: Verify encrypted_agent_stream passes key validation
+        const streamResult = await client.callTool({
+          name: "encrypted_agent_stream",
+          arguments: {
+            inputPaths: ["/tmp"],
+            target: "localhost:19879",
+            signingKeyId: alphaEmail,
+            passphrase: "alpha-mcp-pass",
+            recipientKeyId: betaEmail,
+          },
+        });
+        const streamText = (streamResult.content[0] as { type: string; text: string }).text;
+        // Key validation should pass — no "Signing key not found" or "Recipient key not found"
+        expect(streamText).not.toContain("Signing key not found");
+        expect(streamText).not.toContain("Recipient key not found");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("request_secure_channel generates request successfully", async () => {
+      const email = `mcp-channel-${Date.now()}@zstar-test.local`;
+      const result = await client.callTool({
+        name: "request_secure_channel",
+        arguments: {
+          agentName: "Channel Requester",
+          agentEmail: email,
+          passphrase: "channel-pass",
+          listeningAddress: "requester-host:9000",
+        },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("generated successfully");
+      expect(text).toContain("gpg_import_key");
+      expect(text).toContain("gpg_init_agent_communication");
+      expect(text).toContain("requester-host:9000");
+    });
+
+    it("request_secure_channel returns error for invalid listening address", async () => {
+      const result = await client.callTool({
+        name: "request_secure_channel",
+        arguments: {
+          agentName: "Bad Address Agent",
+          agentEmail: `bad-addr-${Date.now()}@zstar-test.local`,
+          passphrase: "pass",
+          listeningAddress: "invalid-no-port",
+        },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("Invalid listening address");
     });
   });
 });

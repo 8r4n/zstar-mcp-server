@@ -497,4 +497,208 @@ describe("zstar module", () => {
       expect(result.stderr).toContain("gpg_import_key");
     });
   });
+
+  describe("agent-to-agent key exchange (end-to-end)", () => {
+    it("completes full key exchange between two agents", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-a2a-"));
+
+      const alphaEmail = `alpha-e2e-${Date.now()}@zstar-test.local`;
+      const betaEmail = `beta-e2e-${Date.now()}@zstar-test.local`;
+
+      try {
+        // Phase 1: Both agents initialize GPG identities
+        const alphaInit = await zstar.gpgInitAgentCommunication({
+          agentName: "Agent Alpha",
+          agentEmail: alphaEmail,
+          passphrase: "alpha-pass",
+          keyType: "EDDSA",
+        });
+        expect(alphaInit.success).toBe(true);
+        expect(alphaInit.fingerprint.length).toBeGreaterThan(0);
+        expect(alphaInit.publicKey).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+
+        const betaInit = await zstar.gpgInitAgentCommunication({
+          agentName: "Agent Beta",
+          agentEmail: betaEmail,
+          passphrase: "beta-pass",
+          keyType: "EDDSA",
+        });
+        expect(betaInit.success).toBe(true);
+        expect(betaInit.fingerprint.length).toBeGreaterThan(0);
+        expect(betaInit.publicKey).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+
+        // Phase 2: Each agent imports the other's public key (via file)
+        const alphaKeyFile = path.join(tmpDir, "alpha_public.asc");
+        const betaKeyFile = path.join(tmpDir, "beta_public.asc");
+        fs.writeFileSync(alphaKeyFile, alphaInit.publicKey);
+        fs.writeFileSync(betaKeyFile, betaInit.publicKey);
+
+        const alphaImport = await zstar.gpgImportKey({ keyFile: betaKeyFile });
+        expect(alphaImport.exitCode).toBe(0);
+
+        const betaImport = await zstar.gpgImportKey({ keyFile: alphaKeyFile });
+        expect(betaImport.exitCode).toBe(0);
+
+        // Phase 3: Verify encrypted agent stream passes key validation
+        // The stream may fail because tarzst.sh is not available or no listener,
+        // but key validation (signing key + recipient key) should pass.
+        try {
+          const streamResult = await zstar.encryptedAgentStream({
+            inputPaths: ["/tmp"],
+            target: "localhost:19876",
+            signingKeyId: alphaEmail,
+            passphrase: "alpha-pass",
+            recipientKeyId: betaEmail,
+          });
+          expect(streamResult.stderr).not.toContain("Signing key not found");
+          expect(streamResult.stderr).not.toContain("Recipient key not found");
+        } catch (e: unknown) {
+          // tarzst.sh not found is acceptable — key validation is the focus
+          const msg = e instanceof Error ? e.message : String(e);
+          expect(msg).toContain("Could not find tarzst");
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("supports bidirectional communication after key exchange", async () => {
+      const alphaEmail = `alpha-bidir-${Date.now()}@zstar-test.local`;
+      const betaEmail = `beta-bidir-${Date.now()}@zstar-test.local`;
+
+      // Both agents init
+      const alphaInit = await zstar.gpgInitAgentCommunication({
+        agentName: "Alpha Bidir",
+        agentEmail: alphaEmail,
+        passphrase: "alpha-pass",
+        keyType: "EDDSA",
+      });
+      expect(alphaInit.success).toBe(true);
+
+      const betaInit = await zstar.gpgInitAgentCommunication({
+        agentName: "Beta Bidir",
+        agentEmail: betaEmail,
+        passphrase: "beta-pass",
+        keyType: "EDDSA",
+      });
+      expect(betaInit.success).toBe(true);
+
+      // Exchange keys via exported public keys
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-bidir-"));
+
+      try {
+        const alphaKeyFile = path.join(tmpDir, "alpha.asc");
+        const betaKeyFile = path.join(tmpDir, "beta.asc");
+        fs.writeFileSync(alphaKeyFile, alphaInit.publicKey);
+        fs.writeFileSync(betaKeyFile, betaInit.publicKey);
+
+        await zstar.gpgImportKey({ keyFile: betaKeyFile });
+        await zstar.gpgImportKey({ keyFile: alphaKeyFile });
+
+        // Alpha → Beta: passes key validation
+        try {
+          const alphaStream = await zstar.encryptedAgentStream({
+            inputPaths: ["/tmp"],
+            target: "localhost:19877",
+            signingKeyId: alphaEmail,
+            passphrase: "alpha-pass",
+            recipientKeyId: betaEmail,
+          });
+          expect(alphaStream.stderr).not.toContain("Signing key not found");
+          expect(alphaStream.stderr).not.toContain("Recipient key not found");
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          expect(msg).toContain("Could not find tarzst");
+        }
+
+        // Beta → Alpha: passes key validation (reverse direction)
+        try {
+          const betaStream = await zstar.encryptedAgentStream({
+            inputPaths: ["/tmp"],
+            target: "localhost:19878",
+            signingKeyId: betaEmail,
+            passphrase: "beta-pass",
+            recipientKeyId: alphaEmail,
+          });
+          expect(betaStream.stderr).not.toContain("Signing key not found");
+          expect(betaStream.stderr).not.toContain("Recipient key not found");
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          expect(msg).toContain("Could not find tarzst");
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("requestSecureChannel", () => {
+    it("returns a result object with expected fields", async () => {
+      const result = await zstar.requestSecureChannel({
+        agentName: "Channel Test Agent",
+        agentEmail: `channel-test-${Date.now()}@zstar-test.local`,
+        passphrase: "channel-passphrase",
+        keyType: "EDDSA",
+      });
+      expect(typeof result.success).toBe("boolean");
+      expect(typeof result.publicKey).toBe("string");
+      expect(typeof result.fingerprint).toBe("string");
+      expect(typeof result.agentName).toBe("string");
+      expect(typeof result.agentEmail).toBe("string");
+      expect(typeof result.instructions).toBe("string");
+      expect(typeof result.details).toBe("string");
+    });
+
+    it("generates secure channel request with public key on success", async () => {
+      const email = `channel-gen-${Date.now()}@zstar-test.local`;
+      const result = await zstar.requestSecureChannel({
+        agentName: "Channel Gen Agent",
+        agentEmail: email,
+        passphrase: "gen-passphrase",
+        keyType: "EDDSA",
+      });
+      expect(result.success).toBe(true);
+      expect(result.fingerprint.length).toBeGreaterThan(0);
+      expect(result.agentName).toBe("Channel Gen Agent");
+      expect(result.agentEmail).toBe(email);
+      expect(result.instructions).toContain("gpg_import_key");
+      expect(result.instructions).toContain("gpg_init_agent_communication");
+      expect(result.instructions).toContain("encrypted_agent_stream");
+      if (result.publicKey) {
+        expect(result.publicKey).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+      }
+    });
+
+    it("includes listening address in request when provided", async () => {
+      const email = `channel-listen-${Date.now()}@zstar-test.local`;
+      const result = await zstar.requestSecureChannel({
+        agentName: "Listening Agent",
+        agentEmail: email,
+        passphrase: "listen-pass",
+        keyType: "EDDSA",
+        listeningAddress: "agent-host:9000",
+      });
+      expect(result.success).toBe(true);
+      expect(result.listeningAddress).toBe("agent-host:9000");
+      expect(result.details).toContain("agent-host:9000");
+      expect(result.instructions).toContain("agent-host:9000");
+    });
+
+    it("returns validation error for invalid listening address", async () => {
+      const result = await zstar.requestSecureChannel({
+        agentName: "Invalid Agent",
+        agentEmail: `invalid-${Date.now()}@zstar-test.local`,
+        passphrase: "pass",
+        listeningAddress: "bad-address",
+      });
+      expect(result.success).toBe(false);
+      expect(result.details).toContain("Invalid listening address");
+    });
+  });
 });

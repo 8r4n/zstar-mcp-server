@@ -54,7 +54,7 @@ describe("OpenClaw integration (stdio transport)", () => {
   // --- Tool discovery --------------------------------------------------------
 
   describe("tool discovery", () => {
-    it("lists all 19 zstar tools", async () => {
+    it("lists all 20 zstar tools", async () => {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name);
 
@@ -73,11 +73,12 @@ describe("OpenClaw integration (stdio transport)", () => {
       expect(names).toContain("listen_for_stream");
       expect(names).toContain("gpg_init_agent_communication");
       expect(names).toContain("encrypted_agent_stream");
+      expect(names).toContain("request_secure_channel");
       expect(names).toContain("gpg_list_keys");
       expect(names).toContain("gpg_generate_key");
       expect(names).toContain("gpg_export_public_key");
       expect(names).toContain("gpg_import_key");
-      expect(tools.length).toBe(19);
+      expect(tools.length).toBe(20);
     });
 
     it("every tool has a non-empty description", async () => {
@@ -247,6 +248,22 @@ describe("OpenClaw integration (stdio transport)", () => {
       const text = (result.content[0] as { type: string; text: string }).text;
       expect(text).toContain("FAILED");
       expect(text).toContain("host:port");
+    });
+
+    it("request_secure_channel returns FAILED for invalid listening address", async () => {
+      const result = await client.callTool({
+        name: "request_secure_channel",
+        arguments: {
+          agentName: "Test Agent",
+          agentEmail: `openclaw-channel-${Date.now()}@test.local`,
+          passphrase: "pass",
+          listeningAddress: "no-port",
+        },
+      });
+
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("Invalid listening address");
     });
   });
 });

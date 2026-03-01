@@ -624,6 +624,84 @@ export function createServer(): McpServer {
     }
   );
 
+  // --- Tool: request_secure_channel ---
+  server.tool(
+    "request_secure_channel",
+    "Request a remote agent to configure itself for secure real-time GPG-encrypted communication. Initializes the local agent's GPG identity and generates a structured request containing the public key and setup instructions that the remote agent can use to establish a bidirectional encrypted channel. This is the initiating step in automated agent-to-agent secure channel setup.",
+    {
+      agentName: z
+        .string()
+        .min(1)
+        .describe(
+          "Display name for the requesting agent (e.g., 'Build Agent' or 'Agent Alpha')"
+        ),
+      agentEmail: z
+        .string()
+        .min(1)
+        .describe(
+          "Email identifier for the requesting agent (e.g., 'agent-alpha@mcp-server.local')"
+        ),
+      passphrase: z
+        .string()
+        .min(1)
+        .describe("Passphrase to protect the requesting agent's private key"),
+      keyType: z
+        .enum(["RSA", "DSA", "EDDSA"])
+        .optional()
+        .describe("Key type. Default: EDDSA (modern, fast)"),
+      keyLength: z
+        .number()
+        .int()
+        .min(1024)
+        .max(4096)
+        .optional()
+        .describe("Key length in bits (for RSA/DSA). Default: 4096"),
+      expireDate: z
+        .string()
+        .optional()
+        .describe(
+          "Key expiry (e.g., '1y' for 1 year, '0' for no expiry). Default: '0'"
+        ),
+      listeningAddress: z
+        .string()
+        .optional()
+        .describe(
+          "Network host:port where this agent will listen for incoming encrypted streams (e.g., 'agent-alpha-host:9000')"
+        ),
+    },
+    async (params) => {
+      const result = await zstar.requestSecureChannel({
+        agentName: params.agentName,
+        agentEmail: params.agentEmail,
+        passphrase: params.passphrase,
+        keyType: params.keyType,
+        keyLength: params.keyLength,
+        expireDate: params.expireDate,
+        listeningAddress: params.listeningAddress,
+      });
+
+      const parts: string[] = [];
+      parts.push(
+        result.success
+          ? "Secure channel request generated successfully."
+          : "Secure channel request FAILED."
+      );
+      parts.push(`\n${result.details}`);
+
+      if (result.success) {
+        parts.push(`\n${result.instructions}`);
+      }
+
+      if (result.success && result.publicKey) {
+        parts.push(`\nPublic Key:\n${result.publicKey}`);
+      }
+
+      return {
+        content: [{ type: "text" as const, text: parts.join("\n") }],
+      };
+    }
+  );
+
   // --- Tool: gpg_list_keys ---
   server.tool(
     "gpg_list_keys",
