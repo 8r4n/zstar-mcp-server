@@ -51,7 +51,7 @@ The server uses **stdio transport**, compatible with [OpenClaw](https://github.c
 
 ## Tools
 
-The server provides **13 tools** covering every capability of the zstar utility plus GPG key management:
+The server provides **19 tools** covering every capability of the zstar utility — archive creation, network streaming, agent-to-agent encrypted communication, and GPG key management:
 
 | Tool | Description |
 |------|-------------|
@@ -64,6 +64,12 @@ The server provides **13 tools** covering every capability of the zstar utility 
 | `list_archive` | List archive contents without extracting |
 | `verify_checksum` | Verify SHA-512 integrity checksum of an archive |
 | `check_dependencies` | Check whether all required system dependencies are installed |
+| `net_stream_archive` | Stream a compressed archive directly to a remote host via netcat (no disk I/O) |
+| `net_stream_encrypted_archive` | Stream a password-encrypted archive directly to a remote host via netcat |
+| `net_stream_signed_encrypted_archive` | Stream a GPG-signed and recipient-encrypted archive directly to a remote host via netcat |
+| `listen_for_stream` | Listen for incoming streamed data using a decompress script's listen mode |
+| `gpg_init_agent_communication` | Initialize GPG identity for encrypted agent-to-agent communication |
+| `encrypted_agent_stream` | Stream GPG-signed and encrypted data directly from one agent to another over the network |
 | `gpg_list_keys` | List GPG keys in the keyring (public or secret) |
 | `gpg_generate_key` | Generate a new GPG key pair for user or agent |
 | `gpg_export_public_key` | Export a GPG public key in armored format for sharing |
@@ -286,7 +292,110 @@ Check whether all required system dependencies are installed.
 
 **Parameters:** None
 
-**Returns:** Status of each dependency (bash, tar, zstd, sha512sum, numfmt, gpg, pv).
+**Returns:** Status of each dependency (bash, tar, zstd, sha512sum, numfmt, gpg, pv, nc).
+
+---
+
+#### `net_stream_archive`
+
+Stream a compressed archive directly to a remote host via netcat, bypassing all disk I/O. No archive file, checksum, or decompress script is written to disk. Requires `nc` (netcat) on both sender and receiver.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `inputPaths` | `string[]` | Yes | Files or directories to archive and stream |
+| `target` | `string` | Yes | Network destination in `host:port` format (e.g., `remote_host:9000`) |
+| `compressionLevel` | `number` | No | zstd compression level (1-19). Default: 3 |
+| `outputName` | `string` | No | Custom base name (used for stream identification) |
+| `excludePatterns` | `string[]` | No | File exclusion patterns for tar |
+| `cwd` | `string` | No | Working directory |
+
+---
+
+#### `net_stream_encrypted_archive`
+
+Stream a password-encrypted (AES-256 symmetric) compressed archive directly to a remote host via netcat. No files are written to disk. The receiver needs the same password to decrypt.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `inputPaths` | `string[]` | Yes | Files or directories to archive and stream |
+| `target` | `string` | Yes | Network destination in `host:port` format |
+| `password` | `string` | Yes | Symmetric encryption password |
+| `compressionLevel` | `number` | No | zstd compression level (1-19). Default: 3 |
+| `outputName` | `string` | No | Custom base name (used for stream identification) |
+| `excludePatterns` | `string[]` | No | File exclusion patterns for tar |
+| `cwd` | `string` | No | Working directory |
+
+---
+
+#### `net_stream_signed_encrypted_archive`
+
+Stream a GPG-signed and recipient-encrypted compressed archive directly to a remote host via netcat. Uses asymmetric encryption — the sender signs with their private key and encrypts for the recipient's public key. No files are written to disk.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `inputPaths` | `string[]` | Yes | Files or directories to archive and stream |
+| `target` | `string` | Yes | Network destination in `host:port` format |
+| `signingKeyId` | `string` | Yes | GPG key ID for signing (e.g., email or fingerprint) |
+| `passphrase` | `string` | Yes | Passphrase for the signing key |
+| `recipientKeyId` | `string` | Yes | GPG key ID of the recipient for encryption |
+| `compressionLevel` | `number` | No | zstd compression level (1-19). Default: 3 |
+| `outputName` | `string` | No | Custom base name (used for stream identification) |
+| `excludePatterns` | `string[]` | No | File exclusion patterns for tar |
+| `cwd` | `string` | No | Working directory |
+
+---
+
+#### `listen_for_stream`
+
+Listen for incoming streamed data using a decompress script's listen mode. The decompress script receives, decrypts (if applicable), decompresses, and extracts streamed data in real-time. Requires `nc` (netcat). Start this **before** the sender streams data.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `scriptPath` | `string` | Yes | Path to the generated `*_decompress.sh` script |
+| `port` | `number` | Yes | Port number to listen on (1-65535) |
+| `cwd` | `string` | No | Working directory |
+
+---
+
+#### `gpg_init_agent_communication`
+
+Initialize GPG identity for encrypted agent-to-agent communication. Generates a GPG key pair for the local agent (if not already present) and exports the public key. This is the first step in establishing a secure channel between two agents. See the [Agent-to-Agent Encrypted Streaming](#agent-to-agent-encrypted-streaming) section for the complete workflow.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentName` | `string` | Yes | Display name for the agent (e.g., `"Agent Alpha"` or `"Build Server"`) |
+| `agentEmail` | `string` | Yes | Email identifier for the agent (e.g., `"agent-alpha@mcp-server.local"`) |
+| `passphrase` | `string` | Yes | Passphrase to protect the agent's private key |
+| `keyType` | `string` | No | Key type: `"RSA"`, `"DSA"`, or `"EDDSA"`. Default: `"EDDSA"` |
+| `keyLength` | `number` | No | Key length in bits (1024-4096, for RSA/DSA). Default: 4096 |
+| `expireDate` | `string` | No | Key expiry (e.g., `"1y"`, `"0"` for no expiry). Default: `"0"` |
+| `outputFile` | `string` | No | File path to save the exported public key. If omitted, the armored key is returned directly |
+
+**Returns:** Success status, armored public key, GPG fingerprint, and setup instructions for completing the key exchange.
+
+---
+
+#### `encrypted_agent_stream`
+
+Stream GPG-signed and encrypted data directly from one agent to another over the network. Validates that both agents have each other's keys, then streams a signed and recipient-encrypted compressed archive via netcat. Requires prior key exchange via `gpg_init_agent_communication`. See the [Agent-to-Agent Encrypted Streaming](#agent-to-agent-encrypted-streaming) section for the complete workflow.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `inputPaths` | `string[]` | Yes | Files or directories to archive and stream to the remote agent |
+| `target` | `string` | Yes | Remote agent's network address in `host:port` format (e.g., `agent-b-host:9000`) |
+| `signingKeyId` | `string` | Yes | Local agent's GPG key ID for signing (e.g., `"agent-alpha@mcp-server.local"`) |
+| `passphrase` | `string` | Yes | Passphrase for the local agent's signing key |
+| `recipientKeyId` | `string` | Yes | Remote agent's GPG key ID for encryption (e.g., `"agent-beta@mcp-server.local"`) |
+| `compressionLevel` | `number` | No | zstd compression level (1-19). Default: 3 |
+| `outputName` | `string` | No | Custom base name for stream identification |
+| `excludePatterns` | `string[]` | No | File exclusion patterns for tar |
+| `cwd` | `string` | No | Working directory |
 
 ---
 
@@ -657,6 +766,160 @@ The zstar MCP server bridges the gap between **powerful encryption tools** and *
 
 The server turns GPG-based encryption from a manual, error-prone process into a **safe, auditable, tool-call API** that AI agents can use without ever needing direct access to private keys, shell commands, or filesystem internals.
 
+---
+
+## Agent-to-Agent Encrypted Streaming
+
+The agent-to-agent encrypted streaming feature enables two MCP agents to establish a secure, authenticated communication channel and stream GPG-signed, encrypted data directly over the network — with **zero disk I/O** on the sender side. This goes beyond the file-based GPG scenarios above: data flows in real-time from one agent to another without ever being written to an intermediate file.
+
+### How it works
+
+The workflow has three phases: **identity initialization**, **key exchange**, and **encrypted streaming**.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#1a1a2e', 'actorTextColor': '#53d8fb', 'actorBorder': '#e94560', 'signalColor': '#e94560', 'signalTextColor': '#c0392b', 'noteBkgColor': '#533483', 'noteTextColor': '#fff', 'noteBorderColor': '#f5a623', 'sequenceNumberColor': '#f5a623', 'actorLineColor': '#533483'}}}%%
+sequenceDiagram
+    participant A as 🤖 Agent Alpha
+    participant B as 🤖 Agent Beta
+
+    Note over A: Phase 1 — Identity
+    A->>A: gpg_init_agent_communication<br/>Generates EDDSA key pair<br/>Exports public key
+
+    Note over B: Phase 1 — Identity
+    B->>B: gpg_init_agent_communication<br/>Generates EDDSA key pair<br/>Exports public key
+
+    Note over A,B: Phase 2 — Key Exchange
+    A->>B: Share agent_alpha_public.asc
+    B->>A: Share agent_beta_public.asc
+    A->>A: gpg_import_key (Beta's key)
+    B->>B: gpg_import_key (Alpha's key)
+
+    Note over A,B: Phase 3 — Encrypted Streaming
+    B->>B: listen_for_stream<br/>port: 9000
+    A->>B: encrypted_agent_stream<br/>signed: Alpha's key<br/>encrypted: Beta's key<br/>target: agent-beta:9000
+
+    Note right of B: Decrypts with private key<br/>Verifies Alpha's signature<br/>Extracts data
+```
+
+### Phase 1 — Initialize agent identities
+
+Each agent creates its own GPG identity using `gpg_init_agent_communication`. This generates an EDDSA key pair (by default) and exports the public key. If a key already exists for the given email, it is reused.
+
+**Agent Alpha:**
+
+```
+gpg_init_agent_communication({
+  agentName:  "Agent Alpha",
+  agentEmail: "agent-alpha@mcp-server.local",
+  passphrase: "alpha-secure-passphrase",
+  outputFile: "./agent_alpha_public.asc"
+})
+```
+
+**Returns:** Success status, armored public key, GPG fingerprint, and next-step instructions.
+
+**Agent Beta:**
+
+```
+gpg_init_agent_communication({
+  agentName:  "Agent Beta",
+  agentEmail: "agent-beta@mcp-server.local",
+  passphrase: "beta-secure-passphrase",
+  outputFile: "./agent_beta_public.asc"
+})
+```
+
+### Phase 2 — Exchange public keys
+
+Each agent imports the other agent's public key into its keyring. The public key files can be shared through any secure channel (filesystem, MCP tool call, out-of-band transfer).
+
+**Agent Alpha imports Beta's key:**
+
+```
+gpg_import_key({ keyFile: "./agent_beta_public.asc" })
+```
+
+**Agent Beta imports Alpha's key:**
+
+```
+gpg_import_key({ keyFile: "./agent_alpha_public.asc" })
+```
+
+After this step, both agents have each other's public keys and can encrypt data for the other party.
+
+### Phase 3 — Stream encrypted data
+
+The receiving agent starts listening on a port first, then the sending agent streams signed and encrypted data directly to that port.
+
+**Step 1 — Agent Beta starts listening:**
+
+```
+listen_for_stream({
+  scriptPath: "./data_decompress.sh",
+  port:       9000
+})
+```
+
+**Step 2 — Agent Alpha streams encrypted data:**
+
+```
+encrypted_agent_stream({
+  inputPaths:    ["./data-for-beta/", "./config.json"],
+  target:        "agent-beta-host:9000",
+  signingKeyId:  "agent-alpha@mcp-server.local",
+  passphrase:    "alpha-secure-passphrase",
+  recipientKeyId: "agent-beta@mcp-server.local"
+})
+```
+
+The `encrypted_agent_stream` tool:
+1. **Validates the target** — checks `host:port` format (hostname: alphanumeric, dots, underscores, hyphens; port: 1-65535)
+2. **Verifies the signing key** — confirms Alpha's private key exists in the keyring (directs to `gpg_init_agent_communication` if missing)
+3. **Verifies the recipient key** — confirms Beta's public key exists in the keyring (directs to `gpg_import_key` if missing)
+4. **Streams the archive** — compresses with zstd, signs with Alpha's private key, encrypts for Beta's public key, and sends over netcat in a single pipeline
+
+On the receiving end, Agent Beta's listener decrypts the stream with its private key, verifies Alpha's signature, and extracts the data — all in real-time.
+
+### Bidirectional communication
+
+The channel is bidirectional. Agent Beta can stream data back to Agent Alpha by reversing the roles:
+
+```
+# Agent Alpha listens
+listen_for_stream({ scriptPath: "./results_decompress.sh", port: 9001 })
+
+# Agent Beta streams back
+encrypted_agent_stream({
+  inputPaths:    ["./results/"],
+  target:        "agent-alpha-host:9001",
+  signingKeyId:  "agent-beta@mcp-server.local",
+  passphrase:    "beta-secure-passphrase",
+  recipientKeyId: "agent-alpha@mcp-server.local"
+})
+```
+
+### Security properties
+
+| Property | How it's enforced |
+|----------|-------------------|
+| **Confidentiality** | Data is encrypted with the recipient's public key — only their private key can decrypt it |
+| **Authenticity** | The archive is signed with the sender's private key — the receiver verifies the signature |
+| **Integrity** | SHA-512 checksums detect any corruption or tampering in transit |
+| **Non-repudiation** | The sender cannot deny creating the archive — the signature is tied to their GPG key |
+| **Zero disk I/O (sender)** | The compressed, signed, and encrypted stream goes directly over the network — no intermediate files on the sender |
+| **Key validation** | Both the signing key and recipient key are verified before streaming begins — clear error messages guide the user if keys are missing |
+
+### When to use agent-to-agent streaming vs. file-based encryption
+
+| Use case | Tool |
+|----------|------|
+| Two agents need to exchange data in real-time over the network | `gpg_init_agent_communication` + `encrypted_agent_stream` |
+| User sends encrypted data to an agent (or vice versa) via shared filesystem | `sign_and_encrypt_archive` |
+| One-time data transfer with no residue | `create_burn_after_reading_archive` |
+| Streaming without encryption | `net_stream_archive` |
+| Streaming with symmetric (password) encryption | `net_stream_encrypted_archive` |
+| Streaming with asymmetric (GPG) encryption (manual key setup) | `net_stream_signed_encrypted_archive` |
+
 ## Development
 
 ```bash
@@ -668,15 +931,15 @@ npm run test:watch # Run tests in watch mode
 
 ## Testing
 
-The project includes **45 tests** using [Vitest](https://vitest.dev/):
+The project includes **85 tests** using [Vitest](https://vitest.dev/):
 
 | Suite | File | Tests | Description |
 |-------|------|-------|-------------|
-| Unit | `test/zstar.test.ts` | 14 | Tests the zstar wrapper module directly (including GPG key functions) |
-| MCP Integration | `test/server.test.ts` | 21 | Tests the server via `InMemoryTransport` |
-| OpenClaw Integration | `test/openclaw.test.ts` | 10 | End-to-end tests over stdio via `StdioClientTransport` |
+| Unit | `test/zstar.test.ts` | 38 | Tests the zstar wrapper module directly (including GPG key functions, agent communication, and network streaming validation) |
+| MCP Integration | `test/server.test.ts` | 34 | Tests the server via `InMemoryTransport` (all 19 tools, schema validation, error handling) |
+| OpenClaw Integration | `test/openclaw.test.ts` | 13 | End-to-end tests over stdio via `StdioClientTransport` |
 
-Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
+Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, agent-to-agent communication initialization, encrypted streaming validation, network streaming target validation, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
 
 ## Prerequisites
 
@@ -693,6 +956,9 @@ The [zstar](https://github.com/8r4n/zstar) utility (`tarzst.sh`) must be install
 | `numfmt` | ✅ | Part of coreutils | `brew install coreutils` (provides `gnumfmt`) |
 | `gpg` | ✅ | `apt install gnupg` | `brew install gnupg` |
 | `pv` | ✅ | `apt install pv` | `brew install pv` |
+| `nc` | ⬡ Optional | Pre-installed (or `apt install netcat`) | Pre-installed |
+
+> **Note:** `nc` (netcat) is only required for network streaming tools (`net_stream_archive`, `net_stream_encrypted_archive`, `net_stream_signed_encrypted_archive`, `listen_for_stream`) and agent-to-agent encrypted streaming (`encrypted_agent_stream`). All other tools work without it.
 
 #### Quick install
 
