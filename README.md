@@ -14,6 +14,7 @@
     <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet.svg" alt="MCP Compatible" /></a>
     <a href="#openclaw-openclawjson"><img src="https://img.shields.io/badge/OpenClaw-supported-orange.svg" alt="OpenClaw Supported" /></a>
     <a href="https://github.com/8r4n/zstar"><img src="https://img.shields.io/badge/zstar-tarzst.sh-yellow.svg" alt="zstar" /></a>
+    <a href="https://github.com/sponsors/8r4n"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink.svg" alt="Sponsor" /></a>
   </p>
 </div>
 
@@ -710,6 +711,37 @@ brew install bash zstd coreutils gnupg pv
 ### Runtime
 
 - **Node.js** ≥ 18
+
+## 💖 Sponsorship
+
+zstar MCP Server is a free, open-source project maintained in spare time. Sponsorship helps keep it actively developed — new features, faster bug fixes, better documentation, and broader platform support.
+
+### Why sponsor?
+
+- **Sustain active maintenance** — dependency updates, security patches, and compatibility fixes on a regular cadence
+- **Accelerate new features** — GPG agent integration, streaming extraction progress, and more tools on the roadmap
+- **Keep it free and open** — sponsorship means the project stays MIT-licensed and open to everyone
+
+### How funds are used
+
+| Category | Purpose |
+|---|---|
+| 🔬 **Development time** | Core feature work, refactoring, and performance improvements |
+| 🧪 **Testing infrastructure** | CI runners, test environments across Linux and macOS |
+| 📖 **Documentation** | Guides, examples, and tutorials for new integrations |
+| 🛡️ **Security audits** | Occasional third-party review of cryptographic code paths |
+
+### Sponsorship tiers
+
+| Tier | Monthly | Benefits |
+|---|---|---|
+| 🌟 **Stardust Supporter** | $5 | Your name in the README sponsors list · GitHub Sponsor badge on your profile |
+| 🌌 **Nebula Backer** | $10 | Everything above · Early access to pre-release features and changelogs · Priority issue labeling |
+| 💥 **Supernova Patron** | $50 | Everything above · Direct support via a dedicated discussion thread · Input on roadmap priorities · Logo in README (companies welcome) |
+
+Sponsor via **[GitHub Sponsors](https://github.com/sponsors/8r4n)** or **[Ko-fi](https://ko-fi.com/8r4n)**. Even a one-time coffee keeps the project caffeinated ☕.
+
+---
 
 ## Contributing
 
