@@ -768,6 +768,51 @@ The server turns GPG-based encryption from a manual, error-prone process into a 
 
 ---
 
+## Use Case: Two AI Agents Streaming Compressed, GPG-Encrypted Data in Real Time
+
+A common deployment pattern involves two AI agents — each running their own MCP client — that need to exchange data securely over a network in real time. For example:
+
+- **Agent Alpha** (a build agent) produces build artifacts, logs, or model weights that must be delivered to **Agent Beta** (a deployment agent) on a remote host.
+- Neither agent should write sensitive data to disk as unencrypted intermediate files.
+- Both agents must be able to verify the identity of the other (authenticity) and ensure data hasn't been tampered with (integrity).
+- The data should be compressed for efficient transfer over the wire.
+
+The zstar MCP server solves this by combining **zstd compression**, **GPG public-key encryption**, **GPG signing**, and **netcat streaming** into a single tool-call pipeline. The entire flow — compress → sign → encrypt → stream — happens in memory with zero disk I/O on the sender side.
+
+```
+┌─────────────────────────────┐           ┌─────────────────────────────┐
+│        Agent Alpha          │           │        Agent Beta           │
+│      (Build Agent)          │           │    (Deployment Agent)       │
+│                             │           │                             │
+│  1. gpg_init_agent_comm.    │           │  1. gpg_init_agent_comm.    │
+│     → generates EDDSA key   │           │     → generates EDDSA key   │
+│     → exports public key    │           │     → exports public key    │
+│                             │           │                             │
+│  2. gpg_import_key          │◄── key ───│  2. gpg_import_key          │
+│     (imports Beta's key)    │── key ───►│     (imports Alpha's key)   │
+│                             │           │                             │
+│  3. encrypted_agent_stream  │           │  3. listen_for_stream       │
+│     → compresses with zstd  │           │     → listens on port 9000  │
+│     → signs with Alpha key  │── data ──►│     → decrypts with Beta key│
+│     → encrypts for Beta     │           │     → verifies Alpha's sig  │
+│     → streams via netcat    │           │     → decompresses & extract│
+└─────────────────────────────┘           └─────────────────────────────┘
+```
+
+**What happens under the hood** (single pipeline, no temp files):
+
+```
+tar + zstd compress → gpg sign (Alpha's private key)
+                    → gpg encrypt (Beta's public key)
+                    → netcat stream to Beta:9000
+```
+
+On the receiving end, Agent Beta's listener reverses the pipeline: **netcat receive → gpg decrypt (Beta's private key) → gpg verify (Alpha's public key) → zstd decompress → tar extract**.
+
+The channel is bidirectional — Agent Beta can stream results back to Agent Alpha by reversing the roles. See the [Agent-to-Agent Encrypted Streaming](#agent-to-agent-encrypted-streaming) section below for the full three-phase workflow, tool call examples, and security properties.
+
+---
+
 ## Agent-to-Agent Encrypted Streaming
 
 The agent-to-agent encrypted streaming feature enables two MCP agents to establish a secure, authenticated communication channel and stream GPG-signed, encrypted data directly over the network — with **zero disk I/O** on the sender side. This goes beyond the file-based GPG scenarios above: data flows in real-time from one agent to another without ever being written to an intermediate file.
@@ -931,15 +976,15 @@ npm run test:watch # Run tests in watch mode
 
 ## Testing
 
-The project includes **85 tests** using [Vitest](https://vitest.dev/):
+The project includes **88 tests** using [Vitest](https://vitest.dev/):
 
 | Suite | File | Tests | Description |
 |-------|------|-------|-------------|
-| Unit | `test/zstar.test.ts` | 38 | Tests the zstar wrapper module directly (including GPG key functions, agent communication, and network streaming validation) |
-| MCP Integration | `test/server.test.ts` | 34 | Tests the server via `InMemoryTransport` (all 19 tools, schema validation, error handling) |
+| Unit | `test/zstar.test.ts` | 40 | Tests the zstar wrapper module directly (including GPG key functions, agent communication, network streaming validation, and end-to-end agent key exchange) |
+| MCP Integration | `test/server.test.ts` | 35 | Tests the server via `InMemoryTransport` (all 19 tools, schema validation, error handling, and end-to-end agent-to-agent key exchange workflow) |
 | OpenClaw Integration | `test/openclaw.test.ts` | 13 | End-to-end tests over stdio via `StdioClientTransport` |
 
-Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, agent-to-agent communication initialization, encrypted streaming validation, network streaming target validation, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
+Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, agent-to-agent communication initialization, encrypted streaming validation, network streaming target validation, end-to-end agent key exchange with bidirectional communication, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
 
 ## Prerequisites
 
