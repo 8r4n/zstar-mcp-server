@@ -485,8 +485,6 @@ build_create_args() {
     done
   fi
 
-  printf '%s\n' "--"
-
   # input paths
   local ip_len
   ip_len=$(printf '%s' "$args_json" | jq -r '.inputPaths | length')

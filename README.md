@@ -11,6 +11,7 @@
   <p>
     <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
     <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node.js >= 18" /></a>
+    <a href="https://ghcr.io/8r4n/zstar-mcp-server"><img src="https://img.shields.io/badge/ghcr.io-Docker-blue.svg" alt="Docker (GHCR)" /></a>
     <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet.svg" alt="MCP Compatible" /></a>
     <a href="#openclaw-openclawjson"><img src="https://img.shields.io/badge/OpenClaw-supported-orange.svg" alt="OpenClaw Supported" /></a>
     <a href="https://github.com/8r4n/zstar"><img src="https://img.shields.io/badge/zstar-tarzst.sh-yellow.svg" alt="zstar" /></a>
@@ -78,7 +79,25 @@ The server provides **20 tools** covering every capability of the zstar utility 
 
 ## Quick Start
 
-### Installation
+### Docker (recommended)
+
+Pull the pre-built image from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/8r4n/zstar-mcp-server:latest
+```
+
+Or build locally:
+
+```bash
+git clone --recurse-submodules https://github.com/8r4n/zstar-mcp-server.git
+cd zstar-mcp-server
+docker build -t zstar-mcp-server .
+```
+
+The Docker image includes all dependencies (`bash`, `tar`, `zstd`, `gpg`, `pv`, `nc`, `jq`) and `tarzst.sh` — no additional setup required.
+
+### npm
 
 ```bash
 npm install zstar-mcp-server
@@ -87,7 +106,7 @@ npm install zstar-mcp-server
 Or clone and build from source:
 
 ```bash
-git clone https://github.com/8r4n/zstar-mcp-server.git
+git clone --recurse-submodules https://github.com/8r4n/zstar-mcp-server.git
 cd zstar-mcp-server
 npm install
 npm run build
@@ -104,13 +123,56 @@ The server locates the `tarzst.sh` script in the following order:
 export ZSTAR_PATH=/usr/local/bin/tarzst.sh
 ```
 
+> **Note:** The Docker image sets `ZSTAR_PATH` automatically — no configuration needed.
+
 ## Client Configuration
 
-The server communicates over **stdio**, the standard transport supported by OpenClaw, Claude Desktop, and other MCP clients.
+The server communicates over **stdio**, the standard transport supported by OpenClaw, Claude Desktop, and any other MCP client.
 
-### OpenClaw (`openclaw.json`)
+### Docker
 
-Add the server to the `mcpServers` section of your `openclaw.json` (typically at `~/.openclaw/openclaw.json`):
+#### OpenClaw (`openclaw.json`)
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "ghcr.io/8r4n/zstar-mcp-server:latest"]
+    }
+  }
+}
+```
+
+#### Claude Desktop (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "ghcr.io/8r4n/zstar-mcp-server:latest"]
+    }
+  }
+}
+```
+
+To mount a local directory for archive operations, add a volume mount:
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-v", "/path/to/data:/data", "ghcr.io/8r4n/zstar-mcp-server:latest"]
+    }
+  }
+}
+```
+
+### npm
+
+#### OpenClaw (`openclaw.json`)
 
 ```json
 {
@@ -142,7 +204,7 @@ Or if installed from source:
 }
 ```
 
-### Claude Desktop (`claude_desktop_config.json`)
+#### Claude Desktop (`claude_desktop_config.json`)
 
 ```json
 {
@@ -160,7 +222,13 @@ Or if installed from source:
 
 ## Usage
 
-Start the server directly (it communicates over stdio):
+### Docker
+
+```bash
+docker run --rm -i ghcr.io/8r4n/zstar-mcp-server:latest
+```
+
+### Node.js
 
 ```bash
 node dist/index.js
@@ -1049,6 +1117,8 @@ After this exchange, both agents have each other's keys and can use `encrypted_a
 
 ## Development
 
+### Node.js (TypeScript)
+
 ```bash
 npm install       # Install dependencies
 npm run build     # Build TypeScript
@@ -1056,15 +1126,25 @@ npm test          # Run all tests
 npm run test:watch # Run tests in watch mode
 ```
 
+### Docker
+
+```bash
+git clone --recurse-submodules https://github.com/8r4n/zstar-mcp-server.git
+cd zstar-mcp-server
+docker build -t zstar-mcp-server .
+docker run --rm -i zstar-mcp-server
+```
+
 ## Testing
 
-The project includes **96 tests** using [Vitest](https://vitest.dev/):
+The project includes **123 tests** using [Vitest](https://vitest.dev/):
 
 | Suite | File | Tests | Description |
 |-------|------|-------|-------------|
 | Unit | `test/zstar.test.ts` | 44 | Tests the zstar wrapper module directly (including GPG key functions, agent communication, secure channel requests, network streaming validation, and end-to-end agent key exchange) |
-| MCP Integration | `test/server.test.ts` | 38 | Tests the server via `InMemoryTransport` (all 20 tools, schema validation, error handling, and end-to-end agent-to-agent key exchange workflow) |
-| OpenClaw Integration | `test/openclaw.test.ts` | 14 | End-to-end tests over stdio via `StdioClientTransport` |
+| MCP Integration | `test/server.test.ts` | 38 | Tests the TypeScript server via `InMemoryTransport` (all 20 tools, schema validation, error handling, and end-to-end agent-to-agent key exchange workflow) |
+| OpenClaw Integration | `test/openclaw.test.ts` | 14 | End-to-end tests over stdio via `StdioClientTransport` (TypeScript server) |
+| Bash Server | `test/bash-server.test.ts` | 27 | End-to-end tests over stdio via `StdioClientTransport` (bash server — same implementation used in Docker) |
 
 Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, agent-to-agent communication initialization, secure channel requests, encrypted streaming validation, network streaming target validation, end-to-end agent key exchange with bidirectional communication, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
 
@@ -1100,10 +1180,13 @@ brew install bash zstd coreutils gnupg pv
 ```
 
 > **Note:** The MCP server automatically detects macOS and uses platform-appropriate commands (`shasum -a 512` instead of `sha512sum`, `gnumfmt` instead of `numfmt`). No manual aliasing is needed.
+>
+> **Docker users:** All dependencies are pre-installed in the Docker image — no manual setup required.
 
 ### Runtime
 
-- **Node.js** ≥ 18
+- **Docker** (recommended) — all dependencies bundled
+- **Node.js** ≥ 18 (for npm-based installation)
 
 ## 💖 Sponsorship
 
