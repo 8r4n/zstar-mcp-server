@@ -57,6 +57,107 @@ export interface SignAndEncryptArchiveOptions extends SignArchiveOptions {
 }
 
 /**
+ * Options for streaming an archive to a network destination.
+ */
+export interface NetStreamOptions extends CreateArchiveOptions {
+  /** Network destination in host:port format (e.g., "remote_host:9000"). */
+  target: string;
+}
+
+/**
+ * Options for streaming a password-encrypted archive to a network destination.
+ */
+export interface NetStreamEncryptedOptions extends NetStreamOptions {
+  /** Symmetric encryption password. */
+  password: string;
+}
+
+/**
+ * Options for streaming a signed and recipient-encrypted archive to a network destination.
+ */
+export interface NetStreamSignedEncryptedOptions extends NetStreamOptions {
+  /** GPG key ID for signing (e.g., email or key fingerprint). */
+  signingKeyId: string;
+  /** Passphrase for the signing key. */
+  passphrase: string;
+  /** GPG key ID of the recipient for encryption. */
+  recipientKeyId: string;
+}
+
+/**
+ * Options for listening for incoming streamed data using a decompress script.
+ */
+export interface ListenForStreamOptions {
+  /** Path to the generated decompress script. */
+  scriptPath: string;
+  /** Port number to listen on (1-65535). */
+  port: number;
+  /** Working directory. */
+  cwd?: string;
+}
+
+/**
+ * Options for initializing GPG agent communication.
+ * Generates a key pair and exports the public key in one step.
+ */
+export interface GpgInitAgentOptions {
+  /** Display name for the agent (e.g., "Agent Alpha"). */
+  agentName: string;
+  /** Email identifier for the agent (e.g., "agent-alpha@mcp-server.local"). */
+  agentEmail: string;
+  /** Passphrase to protect the private key. */
+  passphrase: string;
+  /** Key type. Default: EDDSA (modern, fast). */
+  keyType?: "RSA" | "DSA" | "EDDSA";
+  /** Key length in bits (for RSA/DSA). Default: 4096. */
+  keyLength?: number;
+  /** Key expiry (e.g., "1y", "0" for no expiry). Default: "0". */
+  expireDate?: string;
+  /** Output file path for the exported public key. If omitted, key is returned in stdout. */
+  outputFile?: string;
+}
+
+/**
+ * Result of initializing GPG agent communication.
+ */
+export interface GpgInitAgentResult {
+  /** Whether the initialization was successful. */
+  success: boolean;
+  /** The agent's public key in armored (ASCII) format. */
+  publicKey: string;
+  /** The agent's key fingerprint. */
+  fingerprint: string;
+  /** Combined output details. */
+  details: string;
+  /** Output file path if the public key was saved to a file. */
+  outputFile?: string;
+}
+
+/**
+ * Options for encrypted agent-to-agent streaming.
+ */
+export interface EncryptedAgentStreamOptions {
+  /** Files or directories to archive and stream. */
+  inputPaths: string[];
+  /** Network destination in host:port format (e.g., "remote_host:9000"). */
+  target: string;
+  /** Signing agent's GPG key ID (e.g., email). */
+  signingKeyId: string;
+  /** Passphrase for the signing key. */
+  passphrase: string;
+  /** Recipient agent's GPG key ID (e.g., email). */
+  recipientKeyId: string;
+  /** zstd compression level (1-19). Default: 3. */
+  compressionLevel?: number;
+  /** Custom base name for stream identification. */
+  outputName?: string;
+  /** File exclusion patterns. */
+  excludePatterns?: string[];
+  /** Working directory for the command. */
+  cwd?: string;
+}
+
+/**
  * Options for decompressing/extracting an archive.
  */
 export interface ExtractArchiveOptions {
@@ -245,6 +346,275 @@ export async function createBurnAfterReadingArchive(
 ): Promise<ZstarResult> {
   const script = findZstarScript();
   const args = ["-b", ...buildCreateArgs(options)];
+  return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Validate a network streaming target in host:port format.
+ * Returns null if valid, or an error message string if invalid.
+ *
+ * Validation rules (matching tarzst.sh):
+ * - Exactly one ':' separator
+ * - Hostname restricted to [a-zA-Z0-9._-]
+ * - Port must be numeric, in range 1-65535
+ * - No whitespace allowed
+ */
+export function validateNetStreamTarget(target: string): string | null {
+  if (/\s/.test(target)) {
+    return "Network target must not contain whitespace.";
+  }
+  const parts = target.split(":");
+  if (parts.length !== 2) {
+    return "Network target must be in host:port format with exactly one ':' separator.";
+  }
+  const [host, portStr] = parts;
+  if (!host || !/^[a-zA-Z0-9._-]+$/.test(host)) {
+    return "Hostname must contain only alphanumeric characters, dots, underscores, and hyphens.";
+  }
+  if (!/^\d+$/.test(portStr)) {
+    return "Port must be a numeric value.";
+  }
+  const port = parseInt(portStr, 10);
+  if (port < 1 || port > 65535) {
+    return "Port must be in the range 1-65535.";
+  }
+  return null;
+}
+
+/**
+ * Stream a compressed archive directly to a network destination via netcat.
+ * No archive file, checksum, or decompress script is written to disk.
+ */
+export async function netStreamArchive(
+  options: NetStreamOptions
+): Promise<ZstarResult> {
+  const validationError = validateNetStreamTarget(options.target);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+  const script = findZstarScript();
+  const args = ["-n", options.target, ...buildCreateArgs(options)];
+  return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Stream a password-encrypted compressed archive to a network destination.
+ */
+export async function netStreamEncryptedArchive(
+  options: NetStreamEncryptedOptions
+): Promise<ZstarResult> {
+  const validationError = validateNetStreamTarget(options.target);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+  const script = findZstarScript();
+  const args = ["-p", "-n", options.target, ...buildCreateArgs(options)];
+  return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Stream a signed and recipient-encrypted archive to a network destination.
+ */
+export async function netStreamSignedEncryptedArchive(
+  options: NetStreamSignedEncryptedOptions
+): Promise<ZstarResult> {
+  const validationError = validateNetStreamTarget(options.target);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+  const script = findZstarScript();
+  const args = [
+    "-s", options.signingKeyId,
+    "-r", options.recipientKeyId,
+    "-n", options.target,
+    ...buildCreateArgs(options),
+  ];
+  return execCommand(script, args, { cwd: options.cwd });
+}
+
+/**
+ * Listen for incoming streamed data using a decompress script's listen mode.
+ * The decompress script's `listen <port>` subcommand receives, decrypts (if applicable),
+ * decompresses, and extracts streamed data in real-time.
+ */
+export async function listenForStream(
+  options: ListenForStreamOptions
+): Promise<ZstarResult> {
+  if (options.port < 1 || options.port > 65535) {
+    return { stdout: "", stderr: "Port must be in the range 1-65535.", exitCode: 2 };
+  }
+  const scriptPath = path.resolve(options.cwd || ".", options.scriptPath);
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      stdout: "",
+      stderr: `Decompress script not found: ${scriptPath}`,
+      exitCode: 1,
+    };
+  }
+  return execCommand("bash", [scriptPath, "listen", String(options.port)], {
+    cwd: options.cwd,
+  });
+}
+
+/**
+ * Initialize GPG communication for an agent.
+ * Generates a GPG key pair (if one does not already exist for the given email)
+ * and exports the public key. This is the first step in establishing encrypted
+ * agent-to-agent communication.
+ */
+export async function gpgInitAgentCommunication(
+  options: GpgInitAgentOptions
+): Promise<GpgInitAgentResult> {
+  const parts: string[] = [];
+
+  // Check if a key already exists for this email
+  const existingKeys = await execCommand("gpg", [
+    "--list-keys",
+    "--keyid-format",
+    "long",
+    options.agentEmail,
+  ]);
+
+  let fingerprint = "";
+
+  if (existingKeys.exitCode === 0 && existingKeys.stdout.trim().length > 0) {
+    parts.push(`GPG key already exists for ${options.agentEmail}.`);
+  } else {
+    // Generate new key pair
+    const genResult = await gpgGenerateKey({
+      name: options.agentName,
+      email: options.agentEmail,
+      passphrase: options.passphrase,
+      keyType: options.keyType || "EDDSA",
+      keyLength: options.keyLength,
+      expireDate: options.expireDate,
+    });
+
+    if (genResult.exitCode !== 0) {
+      return {
+        success: false,
+        publicKey: "",
+        fingerprint: "",
+        details: `Key generation failed (exit code ${genResult.exitCode}).\n${genResult.stderr}`,
+      };
+    }
+    parts.push(`GPG key pair generated for ${options.agentName} <${options.agentEmail}>.`);
+  }
+
+  // Get the fingerprint
+  const fpResult = await execCommand("gpg", [
+    "--with-colons",
+    "--fingerprint",
+    options.agentEmail,
+  ]);
+  if (fpResult.exitCode === 0) {
+    const fpLine = fpResult.stdout.split("\n").find((l) => l.startsWith("fpr:"));
+    if (fpLine) {
+      fingerprint = fpLine.split(":")[9] || "";
+    }
+  }
+
+  // Export the public key
+  const exportResult = await gpgExportPublicKey({
+    keyId: options.agentEmail,
+    outputFile: options.outputFile,
+  });
+
+  if (exportResult.exitCode !== 0) {
+    return {
+      success: false,
+      publicKey: "",
+      fingerprint,
+      details: `Public key export failed.\n${exportResult.stderr}`,
+    };
+  }
+
+  const publicKey = options.outputFile ? "" : exportResult.stdout.trim();
+
+  if (options.outputFile) {
+    parts.push(`Public key exported to ${options.outputFile}.`);
+  } else {
+    parts.push("Public key exported (returned in output).");
+  }
+
+  parts.push(`Fingerprint: ${fingerprint}`);
+  parts.push(
+    "\nTo complete agent-to-agent setup:\n" +
+    "1. Share the public key with the remote agent\n" +
+    "2. Remote agent imports it using gpg_import_key\n" +
+    "3. Remote agent runs gpg_init_agent_communication and shares their public key back\n" +
+    "4. Import the remote agent's public key using gpg_import_key\n" +
+    "5. Both agents can now use encrypted_agent_stream for secure communication"
+  );
+
+  return {
+    success: true,
+    publicKey,
+    fingerprint,
+    details: parts.join("\n"),
+    outputFile: options.outputFile,
+  };
+}
+
+/**
+ * Stream encrypted data between agents. Validates that the signing and recipient
+ * keys exist in the keyring, then streams a signed + recipient-encrypted archive
+ * to the target host via netcat.
+ */
+export async function encryptedAgentStream(
+  options: EncryptedAgentStreamOptions
+): Promise<ZstarResult> {
+  // Validate target format
+  const validationError = validateNetStreamTarget(options.target);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+
+  // Verify the signing key (local agent's private key) exists
+  const signingCheck = await execCommand("gpg", [
+    "--list-secret-keys",
+    "--keyid-format",
+    "long",
+    options.signingKeyId,
+  ]);
+  if (signingCheck.exitCode !== 0 || signingCheck.stdout.trim().length === 0) {
+    return {
+      stdout: "",
+      stderr: `Signing key not found for '${options.signingKeyId}'. ` +
+        "Use gpg_init_agent_communication to generate a key pair first.",
+      exitCode: 1,
+    };
+  }
+
+  // Verify the recipient key (remote agent's public key) exists
+  const recipientCheck = await execCommand("gpg", [
+    "--list-keys",
+    "--keyid-format",
+    "long",
+    options.recipientKeyId,
+  ]);
+  if (recipientCheck.exitCode !== 0 || recipientCheck.stdout.trim().length === 0) {
+    return {
+      stdout: "",
+      stderr: `Recipient key not found for '${options.recipientKeyId}'. ` +
+        "Import the remote agent's public key using gpg_import_key first.",
+      exitCode: 1,
+    };
+  }
+
+  // Stream the signed + encrypted archive
+  const script = findZstarScript();
+  const args = [
+    "-s", options.signingKeyId,
+    "-r", options.recipientKeyId,
+    "-n", options.target,
+    ...buildCreateArgs({
+      inputPaths: options.inputPaths,
+      compressionLevel: options.compressionLevel,
+      outputName: options.outputName,
+      excludePatterns: options.excludePatterns,
+    }),
+  ];
   return execCommand(script, args, { cwd: options.cwd });
 }
 
@@ -460,6 +830,7 @@ export async function checkDependencies(): Promise<DependencyStatus[]> {
     { name: "numfmt", required: true, macAlternative: "gnumfmt" },
     { name: "gpg", required: true },
     { name: "pv", required: true },
+    { name: "nc", required: false },
   ];
 
   const results: DependencyStatus[] = [];

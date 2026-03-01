@@ -56,9 +56,9 @@ describe("zstar module", () => {
   });
 
   describe("checkDependencies", () => {
-    it("returns dependency status for all required tools", async () => {
+    it("returns dependency status for all tools", async () => {
       const deps = await zstar.checkDependencies();
-      expect(deps.length).toBe(7);
+      expect(deps.length).toBe(8);
 
       const names = deps.map((d) => d.name);
       expect(names).toContain("bash");
@@ -68,17 +68,19 @@ describe("zstar module", () => {
       expect(names).toContain("numfmt");
       expect(names).toContain("gpg");
       expect(names).toContain("pv");
+      expect(names).toContain("nc");
 
-      // All tools are required
+      // 7 required tools
       const required = deps.filter((d) => d.required);
       expect(required.length).toBe(7);
       for (const dep of required) {
         expect(dep.required).toBe(true);
       }
 
-      // No optional tools
+      // nc is optional (needed only for network streaming)
       const optional = deps.filter((d) => !d.required);
-      expect(optional.length).toBe(0);
+      expect(optional.length).toBe(1);
+      expect(optional[0].name).toBe("nc");
 
       // bash and tar should be available on most systems
       const bash = deps.find((d) => d.name === "bash");
@@ -249,6 +251,250 @@ describe("zstar module", () => {
       });
       // gpg exits 0 but returns empty output for non-existent keys
       expect(typeof result.exitCode).toBe("number");
+    });
+  });
+
+  describe("validateNetStreamTarget", () => {
+    it("accepts a valid host:port target", () => {
+      expect(zstar.validateNetStreamTarget("localhost:9000")).toBeNull();
+    });
+
+    it("accepts hostname with dots, hyphens, and underscores", () => {
+      expect(zstar.validateNetStreamTarget("my-host.example.com:8080")).toBeNull();
+      expect(zstar.validateNetStreamTarget("host_name:1")).toBeNull();
+      expect(zstar.validateNetStreamTarget("192.168.1.1:65535")).toBeNull();
+    });
+
+    it("rejects target without colon separator", () => {
+      const err = zstar.validateNetStreamTarget("localhost9000");
+      expect(err).toContain("host:port");
+    });
+
+    it("rejects target with multiple colons", () => {
+      const err = zstar.validateNetStreamTarget("a:b:c");
+      expect(err).toContain("host:port");
+    });
+
+    it("rejects non-numeric port", () => {
+      const err = zstar.validateNetStreamTarget("localhost:abc");
+      expect(err).toContain("numeric");
+    });
+
+    it("rejects port 0 (out of range)", () => {
+      const err = zstar.validateNetStreamTarget("localhost:0");
+      expect(err).toContain("1-65535");
+    });
+
+    it("rejects port above 65535", () => {
+      const err = zstar.validateNetStreamTarget("localhost:99999");
+      expect(err).toContain("1-65535");
+    });
+
+    it("rejects target with whitespace", () => {
+      const err = zstar.validateNetStreamTarget("local host:9000");
+      expect(err).toContain("whitespace");
+    });
+
+    it("rejects empty hostname", () => {
+      const err = zstar.validateNetStreamTarget(":9000");
+      expect(err).toContain("Hostname");
+    });
+
+    it("rejects hostname with invalid characters", () => {
+      const err = zstar.validateNetStreamTarget("host@name:9000");
+      expect(err).toContain("Hostname");
+    });
+  });
+
+  describe("netStreamArchive", () => {
+    it("returns validation error for invalid target", async () => {
+      const result = await zstar.netStreamArchive({
+        inputPaths: ["/tmp"],
+        target: "invalid",
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("host:port");
+    });
+
+    it("returns validation error for port out of range", async () => {
+      const result = await zstar.netStreamArchive({
+        inputPaths: ["/tmp"],
+        target: "localhost:0",
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("1-65535");
+    });
+
+    it("returns validation error for whitespace in target", async () => {
+      const result = await zstar.netStreamArchive({
+        inputPaths: ["/tmp"],
+        target: "local host:9000",
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("whitespace");
+    });
+  });
+
+  describe("netStreamEncryptedArchive", () => {
+    it("returns validation error for invalid target", async () => {
+      const result = await zstar.netStreamEncryptedArchive({
+        inputPaths: ["/tmp"],
+        target: "a:b:c",
+        password: "test",
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("host:port");
+    });
+  });
+
+  describe("netStreamSignedEncryptedArchive", () => {
+    it("returns validation error for invalid target", async () => {
+      const result = await zstar.netStreamSignedEncryptedArchive({
+        inputPaths: ["/tmp"],
+        target: "localhost:abc",
+        signingKeyId: "test@example.com",
+        passphrase: "pass",
+        recipientKeyId: "other@example.com",
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("numeric");
+    });
+  });
+
+  describe("listenForStream", () => {
+    it("returns error when script does not exist", async () => {
+      const result = await zstar.listenForStream({
+        scriptPath: "/nonexistent/decompress.sh",
+        port: 9000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not found");
+    });
+
+    it("returns error for port out of range (0)", async () => {
+      const result = await zstar.listenForStream({
+        scriptPath: "/tmp/decompress.sh",
+        port: 0,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("1-65535");
+    });
+
+    it("returns error for port out of range (70000)", async () => {
+      const result = await zstar.listenForStream({
+        scriptPath: "/tmp/decompress.sh",
+        port: 70000,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("1-65535");
+    });
+  });
+
+  describe("gpgInitAgentCommunication", () => {
+    it("returns a result object with expected fields", async () => {
+      const result = await zstar.gpgInitAgentCommunication({
+        agentName: "Test Agent",
+        agentEmail: `test-init-${Date.now()}@zstar-test.local`,
+        passphrase: "test-passphrase",
+        keyType: "EDDSA",
+      });
+      // Result should have the expected shape regardless of success/failure
+      expect(typeof result.success).toBe("boolean");
+      expect(typeof result.publicKey).toBe("string");
+      expect(typeof result.fingerprint).toBe("string");
+      expect(typeof result.details).toBe("string");
+    });
+
+    it("generates key and exports public key on success", async () => {
+      const email = `agent-init-${Date.now()}@zstar-test.local`;
+      const result = await zstar.gpgInitAgentCommunication({
+        agentName: "Init Test Agent",
+        agentEmail: email,
+        passphrase: "test-passphrase-123",
+        keyType: "EDDSA",
+      });
+      expect(result.success).toBe(true);
+      expect(result.fingerprint.length).toBeGreaterThan(0);
+      expect(result.details).toContain(email);
+      expect(result.details).toContain("Fingerprint:");
+      expect(result.details).toContain("agent-to-agent setup");
+      // Public key should be returned when no output file specified
+      if (result.publicKey) {
+        expect(result.publicKey).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+      }
+    });
+
+    it("reuses existing key if already generated for the email", async () => {
+      const email = `agent-reuse-${Date.now()}@zstar-test.local`;
+      // First call: generate key
+      const first = await zstar.gpgInitAgentCommunication({
+        agentName: "Reuse Agent",
+        agentEmail: email,
+        passphrase: "reuse-pass",
+        keyType: "EDDSA",
+      });
+      expect(first.success).toBe(true);
+
+      // Second call: should reuse existing key
+      const second = await zstar.gpgInitAgentCommunication({
+        agentName: "Reuse Agent",
+        agentEmail: email,
+        passphrase: "reuse-pass",
+        keyType: "EDDSA",
+      });
+      expect(second.success).toBe(true);
+      expect(second.details).toContain("already exists");
+      expect(second.fingerprint).toBe(first.fingerprint);
+    });
+  });
+
+  describe("encryptedAgentStream", () => {
+    it("returns validation error for invalid target", async () => {
+      const result = await zstar.encryptedAgentStream({
+        inputPaths: ["/tmp"],
+        target: "invalid-no-port",
+        signingKeyId: "sender@test.local",
+        passphrase: "pass",
+        recipientKeyId: "recipient@test.local",
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("host:port");
+    });
+
+    it("returns error when signing key does not exist", async () => {
+      const result = await zstar.encryptedAgentStream({
+        inputPaths: ["/tmp"],
+        target: "localhost:9000",
+        signingKeyId: "nonexistent-sender@test.local",
+        passphrase: "pass",
+        recipientKeyId: "nonexistent-recipient@test.local",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Signing key not found");
+      expect(result.stderr).toContain("gpg_init_agent_communication");
+    });
+
+    it("returns error when recipient key does not exist", async () => {
+      // First generate a signing key so we get past the first check
+      const signerEmail = `stream-signer-${Date.now()}@zstar-test.local`;
+      const initResult = await zstar.gpgInitAgentCommunication({
+        agentName: "Stream Signer",
+        agentEmail: signerEmail,
+        passphrase: "signer-pass",
+        keyType: "EDDSA",
+      });
+      expect(initResult.success).toBe(true);
+
+      const result = await zstar.encryptedAgentStream({
+        inputPaths: ["/tmp"],
+        target: "localhost:9000",
+        signingKeyId: signerEmail,
+        passphrase: "signer-pass",
+        recipientKeyId: "nonexistent-recipient@test.local",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Recipient key not found");
+      expect(result.stderr).toContain("gpg_import_key");
     });
   });
 });
