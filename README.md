@@ -984,6 +984,121 @@ sudo restorecon -Rv /home/*/
 
 ---
 
+### Quickstart: OpenClaw with Docker-Only Host Access Restriction
+
+This guide configures OpenClaw to use the Docker-based zstar MCP server as the **sole file access mechanism**, preventing the agent from reading or writing arbitrary files on the host.
+
+#### 1. Pull the hardened image
+
+```bash
+docker pull ghcr.io/8r4n/zstar-mcp-server:latest
+```
+
+#### 2. Create a dedicated data directory
+
+Create a single directory that the agent is allowed to access. No other host path will be mounted:
+
+```bash
+mkdir -p ~/zstar-data
+```
+
+On SELinux-enabled hosts, label it so the confined MCP server process can access it:
+
+```bash
+sudo semanage fcontext -a -t zstar_archive_t "$HOME/zstar-data(/.*)?"
+sudo restorecon -Rv ~/zstar-data
+```
+
+#### 3. Configure OpenClaw
+
+Create or edit `openclaw.json` with the zstar server as the **only** MCP server — no filesystem, shell, or other tools:
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--read-only",
+        "--tmpfs", "/tmp",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "-v", "/home/you/zstar-data:/data",
+        "ghcr.io/8r4n/zstar-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+Replace `/home/you/zstar-data` with the absolute path to your data directory.
+
+> **Key flags:**
+> - `--read-only` — container filesystem is immutable (prevents tampering with server binaries)
+> - `--tmpfs /tmp` — writable scratch space for GPG operations and temp files (ephemeral, never touches the host)
+> - `--cap-drop=ALL` — drops all Linux capabilities (no privilege escalation)
+> - `--security-opt=no-new-privileges` — prevents `setuid`/`setgid` escalation inside the container
+> - Only `/data` is mounted — the agent cannot access any other host path
+
+#### 4. What the agent can and cannot do
+
+| Action | Allowed | Why |
+|--------|---------|-----|
+| Create archives in `/data` | ✅ | Mounted volume |
+| Extract archives in `/data` | ✅ | Mounted volume |
+| Verify checksums in `/data` | ✅ | Mounted volume |
+| Encrypt/sign archives in `/data` | ✅ | Mounted volume |
+| Stream archives over the network | ✅ | Network streaming tools |
+| Read `/etc/shadow`, SSH keys, user files | ❌ | Not mounted into container |
+| Write outside `/data` | ❌ | Read-only filesystem + no other mounts |
+| Execute host binaries | ❌ | Container isolation |
+| Escalate privileges | ❌ | `--cap-drop=ALL` + `no-new-privileges` |
+
+#### 5. Verify isolation
+
+Start OpenClaw and ask the agent to create an archive:
+
+```
+Create a zstar archive of /data/myfiles
+```
+
+Then verify the agent **cannot** access anything outside `/data`:
+
+```
+List files in /etc
+```
+
+The agent will fail — it has no tool to list files, and the MCP server has no access to `/etc`.
+
+#### 6. Add SELinux enforcement (RHEL/Fedora)
+
+On SELinux-enforcing hosts, add `--security-opt label=type:zstar_mcp_t` to the Docker args for kernel-level MAC enforcement:
+
+```json
+{
+  "mcpServers": {
+    "zstar": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--read-only",
+        "--tmpfs", "/tmp",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--security-opt", "label=type:zstar_mcp_t",
+        "-v", "/home/you/zstar-data:/data:Z",
+        "ghcr.io/8r4n/zstar-mcp-server:latest"
+      ]
+    }
+  }
+}
+```
+
+The `:Z` volume suffix tells Docker to relabel the mount with the correct SELinux context. Combined with the `zstar_mcp_t` process domain, the kernel enforces that even if the container is compromised, only `zstar_archive_t`-labeled files are accessible.
+
+---
+
 ## Use Case: Two AI Agents Streaming Compressed, GPG-Encrypted Data in Real Time
 
 A common deployment pattern involves two AI agents — each running their own MCP client — that need to exchange data securely over a network in real time. For example:
