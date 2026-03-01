@@ -54,7 +54,7 @@ describe("OpenClaw integration (stdio transport)", () => {
   // --- Tool discovery --------------------------------------------------------
 
   describe("tool discovery", () => {
-    it("lists all 19 zstar tools", async () => {
+    it("lists all 20 zstar tools", async () => {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name);
 

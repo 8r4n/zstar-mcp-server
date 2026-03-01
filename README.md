@@ -51,7 +51,7 @@ The server uses **stdio transport**, compatible with [OpenClaw](https://github.c
 
 ## Tools
 
-The server provides **19 tools** covering every capability of the zstar utility — archive creation, network streaming, agent-to-agent encrypted communication, and GPG key management:
+The server provides **20 tools** covering every capability of the zstar utility — archive creation, network streaming, agent-to-agent encrypted communication, and GPG key management:
 
 | Tool | Description |
 |------|-------------|
@@ -70,6 +70,7 @@ The server provides **19 tools** covering every capability of the zstar utility 
 | `listen_for_stream` | Listen for incoming streamed data using a decompress script's listen mode |
 | `gpg_init_agent_communication` | Initialize GPG identity for encrypted agent-to-agent communication |
 | `encrypted_agent_stream` | Stream GPG-signed and encrypted data directly from one agent to another over the network |
+| `request_secure_channel` | Request a remote agent to configure itself for secure GPG-encrypted real-time communication |
 | `gpg_list_keys` | List GPG keys in the keyring (public or secret) |
 | `gpg_generate_key` | Generate a new GPG key pair for user or agent |
 | `gpg_export_public_key` | Export a GPG public key in armored format for sharing |
@@ -396,6 +397,23 @@ Stream GPG-signed and encrypted data directly from one agent to another over the
 | `outputName` | `string` | No | Custom base name for stream identification |
 | `excludePatterns` | `string[]` | No | File exclusion patterns for tar |
 | `cwd` | `string` | No | Working directory |
+
+---
+
+#### `request_secure_channel`
+
+Request a remote agent to configure itself for secure real-time GPG-encrypted communication. Initializes the local agent's GPG identity and generates a structured request containing the public key and setup instructions. The remote agent uses this request to complete the channel setup. See the [Agent-to-Agent Encrypted Streaming](#agent-to-agent-encrypted-streaming) section for the complete workflow.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `agentName` | `string` | Yes | Display name for the requesting agent (e.g., `"Build Agent"`) |
+| `agentEmail` | `string` | Yes | Email identifier for the requesting agent (e.g., `"agent-alpha@mcp-server.local"`) |
+| `passphrase` | `string` | Yes | Passphrase to protect the requesting agent's private key |
+| `keyType` | `string` | No | Key type: `"RSA"`, `"DSA"`, or `"EDDSA"`. Default: `"EDDSA"` |
+| `keyLength` | `number` | No | Key length in bits (1024-4096, for RSA/DSA). Default: 4096 |
+| `expireDate` | `string` | No | Key expiry (e.g., `"1y"`, `"0"` for no expiry). Default: `"0"` |
+| `listeningAddress` | `string` | No | Network `host:port` where this agent will listen (e.g., `"agent-alpha-host:9000"`) |
 
 ---
 
@@ -779,32 +797,48 @@ A common deployment pattern involves two AI agents — each running their own MC
 
 The zstar MCP server solves this by combining **zstd compression**, **GPG public-key encryption**, **GPG signing**, and **netcat streaming** into a single tool-call pipeline. The entire flow — compress → sign → encrypt → stream — happens in memory with zero disk I/O on the sender side.
 
-```
-┌─────────────────────────────┐           ┌─────────────────────────────┐
-│        Agent Alpha          │           │        Agent Beta           │
-│      (Build Agent)          │           │    (Deployment Agent)       │
-│                             │           │                             │
-│  1. gpg_init_agent_comm.    │           │  1. gpg_init_agent_comm.    │
-│     → generates EDDSA key   │           │     → generates EDDSA key   │
-│     → exports public key    │           │     → exports public key    │
-│                             │           │                             │
-│  2. gpg_import_key          │◄── key ───│  2. gpg_import_key          │
-│     (imports Beta's key)    │── key ───►│     (imports Alpha's key)   │
-│                             │           │                             │
-│  3. encrypted_agent_stream  │           │  3. listen_for_stream       │
-│     → compresses with zstd  │           │     → listens on port 9000  │
-│     → signs with Alpha key  │── data ──►│     → decrypts with Beta key│
-│     → encrypts for Beta     │           │     → verifies Alpha's sig  │
-│     → streams via netcat    │           │     → decompresses & extract│
-└─────────────────────────────┘           └─────────────────────────────┘
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'lineColor': '#e94560', 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eee', 'edgeLabelBackground': '#1a1a2e', 'clusterBkg': '#0d1b2a', 'clusterBorder': '#e94560'}}}%%
+flowchart LR
+    subgraph alpha["🤖 Agent Alpha — Build Agent"]
+        A1["1. gpg_init_agent_comm.\n→ generates EDDSA key\n→ exports public key"]
+        A2["2. gpg_import_key\n(imports Beta's key)"]
+        A3["3. encrypted_agent_stream\n→ compresses with zstd\n→ signs with Alpha key\n→ encrypts for Beta\n→ streams via netcat"]
+    end
+
+    subgraph beta["🤖 Agent Beta — Deployment Agent"]
+        B1["1. gpg_init_agent_comm.\n→ generates EDDSA key\n→ exports public key"]
+        B2["2. gpg_import_key\n(imports Alpha's key)"]
+        B3["3. listen_for_stream\n→ listens on port 9000\n→ decrypts with Beta key\n→ verifies Alpha's sig\n→ decompresses & extract"]
+    end
+
+    A1 -.->|"🔑 public key"| B2
+    B1 -.->|"🔑 public key"| A2
+    A3 ==>|"🔒 encrypted data"| B3
+
+    style alpha fill:#0d1b2a,stroke:#e94560,color:#eee
+    style beta fill:#0d1b2a,stroke:#e94560,color:#eee
+    style A1 fill:#1a1a2e,stroke:#53d8fb,color:#eee
+    style A2 fill:#0f3460,stroke:#53d8fb,color:#eee
+    style A3 fill:#533483,stroke:#e94560,color:#eee
+    style B1 fill:#1a1a2e,stroke:#53d8fb,color:#eee
+    style B2 fill:#0f3460,stroke:#53d8fb,color:#eee
+    style B3 fill:#533483,stroke:#e94560,color:#eee
 ```
 
 **What happens under the hood** (single pipeline, no temp files):
 
-```
-tar + zstd compress → gpg sign (Alpha's private key)
-                    → gpg encrypt (Beta's public key)
-                    → netcat stream to Beta:9000
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'lineColor': '#e94560', 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eee', 'edgeLabelBackground': '#1a1a2e', 'clusterBkg': '#0d1b2a'}}}%%
+flowchart LR
+    T["tar + zstd\ncompress"] --> S["gpg sign\n🔑 Alpha's\nprivate key"]
+    S --> E["gpg encrypt\n🔒 Beta's\npublic key"]
+    E --> N["netcat stream\n→ Beta:9000"]
+
+    style T fill:#1a1a2e,stroke:#53d8fb,color:#eee
+    style S fill:#0f3460,stroke:#e94560,color:#eee
+    style E fill:#533483,stroke:#e94560,color:#eee
+    style N fill:#2d6a4f,stroke:#52b788,color:#eee
 ```
 
 On the receiving end, Agent Beta's listener reverses the pipeline: **netcat receive → gpg decrypt (Beta's private key) → gpg verify (Alpha's public key) → zstd decompress → tar extract**.
@@ -943,6 +977,53 @@ encrypted_agent_stream({
 })
 ```
 
+### Requesting a secure channel
+
+The `request_secure_channel` tool streamlines the setup process by allowing one agent to programmatically ask another agent to configure itself for secure communication. Instead of manually coordinating key exchange, Agent Alpha generates a structured request that Agent Beta can act on directly.
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#1a1a2e', 'actorTextColor': '#53d8fb', 'actorBorder': '#e94560', 'signalColor': '#e94560', 'signalTextColor': '#c0392b', 'noteBkgColor': '#533483', 'noteTextColor': '#fff', 'noteBorderColor': '#f5a623', 'sequenceNumberColor': '#f5a623', 'actorLineColor': '#533483'}}}%%
+sequenceDiagram
+    participant A as 🤖 Agent Alpha
+    participant B as 🤖 Agent Beta
+
+    Note over A: Step 1 — Request
+    A->>A: request_secure_channel<br/>Generates EDDSA key pair<br/>Packages public key + instructions
+
+    A->>B: Send request<br/>(public key + agent info + listening address)
+
+    Note over B: Step 2 — Configure
+    B->>B: gpg_import_key<br/>(imports Alpha's public key)
+    B->>B: gpg_init_agent_communication<br/>Generates EDDSA key pair
+
+    B->>A: Share Beta's public key
+    A->>A: gpg_import_key<br/>(imports Beta's public key)
+
+    Note over A,B: Step 3 — Secure Channel Ready
+    A->>B: encrypted_agent_stream ↔ listen_for_stream
+```
+
+**Agent Alpha requests a secure channel:**
+
+```
+request_secure_channel({
+  agentName:        "Agent Alpha",
+  agentEmail:       "agent-alpha@mcp-server.local",
+  passphrase:       "alpha-secure-passphrase",
+  listeningAddress: "agent-alpha-host:9001"
+})
+```
+
+**Returns:** A structured request containing Alpha's public key, fingerprint, listening address, and step-by-step instructions for Agent Beta to complete the setup.
+
+**Agent Beta processes the request:**
+
+1. Imports Alpha's public key: `gpg_import_key({ keyFile: "./alpha_public.asc" })`
+2. Initializes its own identity: `gpg_init_agent_communication({ agentName: "Agent Beta", ... })`
+3. Shares its public key back to Alpha
+
+After this exchange, both agents have each other's keys and can use `encrypted_agent_stream` for secure real-time communication.
+
 ### Security properties
 
 | Property | How it's enforced |
@@ -958,6 +1039,7 @@ encrypted_agent_stream({
 
 | Use case | Tool |
 |----------|------|
+| One agent requests another to set up a secure channel | `request_secure_channel` |
 | Two agents need to exchange data in real-time over the network | `gpg_init_agent_communication` + `encrypted_agent_stream` |
 | User sends encrypted data to an agent (or vice versa) via shared filesystem | `sign_and_encrypt_archive` |
 | One-time data transfer with no residue | `create_burn_after_reading_archive` |
@@ -976,15 +1058,15 @@ npm run test:watch # Run tests in watch mode
 
 ## Testing
 
-The project includes **88 tests** using [Vitest](https://vitest.dev/):
+The project includes **96 tests** using [Vitest](https://vitest.dev/):
 
 | Suite | File | Tests | Description |
 |-------|------|-------|-------------|
-| Unit | `test/zstar.test.ts` | 40 | Tests the zstar wrapper module directly (including GPG key functions, agent communication, network streaming validation, and end-to-end agent key exchange) |
-| MCP Integration | `test/server.test.ts` | 35 | Tests the server via `InMemoryTransport` (all 19 tools, schema validation, error handling, and end-to-end agent-to-agent key exchange workflow) |
-| OpenClaw Integration | `test/openclaw.test.ts` | 13 | End-to-end tests over stdio via `StdioClientTransport` |
+| Unit | `test/zstar.test.ts` | 44 | Tests the zstar wrapper module directly (including GPG key functions, agent communication, secure channel requests, network streaming validation, and end-to-end agent key exchange) |
+| MCP Integration | `test/server.test.ts` | 38 | Tests the server via `InMemoryTransport` (all 20 tools, schema validation, error handling, and end-to-end agent-to-agent key exchange workflow) |
+| OpenClaw Integration | `test/openclaw.test.ts` | 14 | End-to-end tests over stdio via `StdioClientTransport` |
 
-Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, agent-to-agent communication initialization, encrypted streaming validation, network streaming target validation, end-to-end agent key exchange with bidirectional communication, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
+Tests cover tool registration, schema validation, dependency checking, checksum verification (valid and corrupted files), GPG key management, agent-to-agent communication initialization, secure channel requests, encrypted streaming validation, network streaming target validation, end-to-end agent key exchange with bidirectional communication, error handling, and the full MCP protocol handshake over stdio — the same way OpenClaw launches servers.
 
 ## Prerequisites
 
