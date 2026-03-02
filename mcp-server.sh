@@ -439,6 +439,36 @@ tools_json() {
       },
       "required":["keyFile"]
     }
+  },
+  {
+    "name":"write_file",
+    "description":"Protect a single file using --no-compress mode with mandatory GPG sign-and-encrypt. Both a signing key and a recipient encryption key are required, making encryption non-optional. When SELinux is active the output file is labeled with the zstar_archive_t type for mandatory access control.",
+    "inputSchema":{
+      "type":"object",
+      "properties":{
+        "filePath":{"type":"string","minLength":1,"description":"Path to the single regular file to protect"},
+        "signingKeyId":{"type":"string","minLength":1,"description":"GPG key ID used to sign (e.g., email or fingerprint)"},
+        "passphrase":{"type":"string","description":"Passphrase for the signing key"},
+        "recipientKeyId":{"type":"string","minLength":1,"description":"GPG key ID of the recipient for encryption"},
+        "outputName":{"type":"string","description":"Custom base name for the output file"},
+        "cwd":{"type":"string","description":"Working directory for the command"}
+      },
+      "required":["filePath","signingKeyId","passphrase","recipientKeyId"]
+    }
+  },
+  {
+    "name":"read_file",
+    "description":"Decrypt a file previously written by write_file. When SELinux is active, the file must carry the zstar_archive_t label (mandatory access control); files without this label are rejected. If outputFile is provided the decrypted content is written to disk and also labeled with zstar_archive_t; otherwise the decrypted content is returned directly.",
+    "inputSchema":{
+      "type":"object",
+      "properties":{
+        "filePath":{"type":"string","minLength":1,"description":"Path to the GPG-encrypted file to decrypt"},
+        "passphrase":{"type":"string","description":"Passphrase for GPG decryption"},
+        "outputFile":{"type":"string","description":"Output file path. If omitted, decrypted content is returned in the response."},
+        "cwd":{"type":"string","description":"Working directory for the command"}
+      },
+      "required":["filePath"]
+    }
   }
 ]
 TOOLS_EOF
@@ -1029,7 +1059,140 @@ ${terr}"
   _tool_text="$parts"
 }
 
-# --- Agent communication tools ---
+# ---------------------------------------------------------------------------
+# check_selinux_label  <file>
+# Returns 0 if SELinux is inactive or the file has zstar_archive_t label.
+# Returns 1 and prints an error message if the label check fails.
+# ---------------------------------------------------------------------------
+check_selinux_label() {
+  local file="$1"
+  [[ -f /etc/selinux/config ]] || return 0
+  grep -qE '^SELINUX=(enforcing|permissive)' /etc/selinux/config 2>/dev/null || return 0
+  if ls -Z "$file" 2>/dev/null | grep -q 'zstar_archive_t'; then
+    return 0
+  fi
+  echo "SELinux MAC enforcement: '${file}' does not have the required 'zstar_archive_t' label. Only files written by write_file may be read."
+  return 1
+}
+
+# apply zstar_archive_t SELinux label when SELinux is active
+apply_selinux_label() {
+  local file="$1"
+  [[ -f /etc/selinux/config ]] || return 0
+  grep -qE '^SELINUX=(enforcing|permissive)' /etc/selinux/config 2>/dev/null || return 0
+  chcon -t zstar_archive_t "$file" 2>/dev/null || true
+}
+
+handle_write_file() {
+  local id_json="$1" args="$2"
+  local script file_path signing_key_id passphrase recipient_key_id output_name cwd
+  script=$(find_zstar_script) || { _tool_text="Secure file write: FAILED (exit code 1)
+
+Errors:
+Could not find tarzst.sh."; return; }
+  file_path=$(printf '%s' "$args" | jq -r '.filePath')
+  signing_key_id=$(printf '%s' "$args" | jq -r '.signingKeyId')
+  passphrase=$(printf '%s' "$args" | jq -r '.passphrase')
+  recipient_key_id=$(printf '%s' "$args" | jq -r '.recipientKeyId')
+  output_name=$(printf '%s' "$args" | jq -r '.outputName // empty')
+  cwd=$(printf '%s' "$args" | jq -r '.cwd // empty')
+
+  # Resolve path
+  local resolved_path
+  if [[ -n "$cwd" ]]; then
+    resolved_path="$(cd "$cwd" && realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
+  else
+    resolved_path="$(realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
+  fi
+
+  if [[ ! -f "$resolved_path" ]]; then
+    _tool_text="Secure file write: FAILED (exit code 1)
+
+Errors:
+File not found: ${resolved_path}"
+    return
+  fi
+
+  local -a cmd_args=("--no-compress" "-s" "$signing_key_id" "-r" "$recipient_key_id")
+  if [[ -n "$output_name" ]]; then
+    cmd_args+=("-o" "$output_name")
+  fi
+  cmd_args+=("$resolved_path")
+
+  # tarzst.sh reads the passphrase from stdin when not in a TTY
+  local tmp_out tmp_err
+  tmp_out=$(mktemp); tmp_err=$(mktemp)
+  _exit_code=0
+  if [[ -n "$cwd" ]]; then
+    printf '%s\n' "$passphrase" | bash -c "cd $(printf '%q' "$cwd") && $(printf '%q' "$script") $(printf '%q ' "${cmd_args[@]}")" >"$tmp_out" 2>"$tmp_err" || _exit_code=$?
+  else
+    printf '%s\n' "$passphrase" | "$script" "${cmd_args[@]}" >"$tmp_out" 2>"$tmp_err" || _exit_code=$?
+  fi
+  _stdout=$(<"$tmp_out"); _stderr=$(<"$tmp_err")
+  rm -f "$tmp_out" "$tmp_err"
+  _tool_text=$(format_result "$_exit_code" "$_stdout" "$_stderr" "Secure file write")
+}
+
+handle_read_file() {
+  local id_json="$1" args="$2"
+  local file_path passphrase output_file cwd
+  file_path=$(printf '%s' "$args" | jq -r '.filePath')
+  passphrase=$(printf '%s' "$args" | jq -r '.passphrase // empty')
+  output_file=$(printf '%s' "$args" | jq -r '.outputFile // empty')
+  cwd=$(printf '%s' "$args" | jq -r '.cwd // empty')
+
+  # Resolve path
+  local resolved_path
+  if [[ -n "$cwd" ]]; then
+    resolved_path="$(cd "$cwd" && realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
+  else
+    resolved_path="$(realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
+  fi
+
+  if [[ ! -f "$resolved_path" ]]; then
+    _tool_text="Secure file read: FAILED (exit code 1)
+
+Errors:
+File not found: ${resolved_path}"
+    return
+  fi
+
+  # Enforce SELinux MAC
+  local label_err
+  label_err=$(check_selinux_label "$resolved_path") || {
+    _tool_text="Secure file read: FAILED (exit code 1)
+
+Errors:
+${label_err}"
+    return
+  }
+
+  local -a gpg_args=("--decrypt" "--batch" "--yes")
+  if [[ -n "$passphrase" ]]; then
+    gpg_args+=("--passphrase" "$passphrase" "--pinentry-mode" "loopback")
+  fi
+  local resolved_out=""
+  if [[ -n "$output_file" ]]; then
+    if [[ -n "$cwd" ]]; then
+      resolved_out="$(cd "$cwd" && realpath -- "$output_file" 2>/dev/null || echo "$output_file")"
+    else
+      resolved_out="$(realpath -m -- "$output_file" 2>/dev/null || echo "$output_file")"
+    fi
+    gpg_args+=("--output" "$resolved_out")
+  fi
+  gpg_args+=("$resolved_path")
+
+  run_cmd gpg "${gpg_args[@]}"
+
+  # Label decrypted output file when written to disk
+  if [[ "$_exit_code" -eq 0 && -n "$resolved_out" ]]; then
+    apply_selinux_label "$resolved_out"
+  fi
+
+  _tool_text=$(format_result "$_exit_code" "$_stdout" "$_stderr" "Secure file read")
+}
+
+
 
 handle_gpg_init_agent_communication() {
   local id_json="$1" args="$2"
@@ -1331,6 +1494,8 @@ handle_request() {
         gpg_generate_key)                     handle_gpg_generate_key "$id_json" "$tool_args" ;;
         gpg_export_public_key)                handle_gpg_export_public_key "$id_json" "$tool_args" ;;
         gpg_import_key)                       handle_gpg_import_key "$id_json" "$tool_args" ;;
+        write_file)                           handle_write_file "$id_json" "$tool_args" ;;
+        read_file)                            handle_read_file "$id_json" "$tool_args" ;;
         *)
           send "$(make_error "$id_json" -32601 "Unknown tool: $tool_name")"
           return

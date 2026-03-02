@@ -701,4 +701,105 @@ describe("zstar module", () => {
       expect(result.details).toContain("Invalid listening address");
     });
   });
+
+  describe("writeSecureFile", () => {
+    it("returns error when file does not exist", async () => {
+      const result = await zstar.writeSecureFile({
+        filePath: "/nonexistent/file.txt",
+        signingKeyId: "test@example.com",
+        passphrase: "pass",
+        recipientKeyId: "recipient@example.com",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not found");
+    });
+
+    it("returns error when path is not a regular file", async () => {
+      const os = require("os");
+      const result = await zstar.writeSecureFile({
+        filePath: os.tmpdir(),
+        signingKeyId: "test@example.com",
+        passphrase: "pass",
+        recipientKeyId: "recipient@example.com",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not a regular file");
+    });
+
+    it("invokes tarzst.sh with --no-compress and GPG sign+encrypt args", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-write-test-"));
+      const testFile = path.join(tmpDir, "secret.txt");
+      fs.writeFileSync(testFile, "top secret content\n");
+
+      const orig = process.env.ZSTAR_PATH;
+      try {
+        // Point to a fake script that just echoes its args so we can verify them
+        const fakeScript = path.join(tmpDir, "fake-tarzst.sh");
+        fs.writeFileSync(
+          fakeScript,
+          '#!/bin/bash\necho "ARGS: $*"\n',
+          { mode: 0o755 }
+        );
+        process.env.ZSTAR_PATH = fakeScript;
+
+        const result = await zstar.writeSecureFile({
+          filePath: testFile,
+          signingKeyId: "signer@example.com",
+          passphrase: "mypass",
+          recipientKeyId: "recipient@example.com",
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("--no-compress");
+        expect(result.stdout).toContain("-s");
+        expect(result.stdout).toContain("signer@example.com");
+        expect(result.stdout).toContain("-r");
+        expect(result.stdout).toContain("recipient@example.com");
+      } finally {
+        if (orig !== undefined) {
+          process.env.ZSTAR_PATH = orig;
+        } else {
+          delete process.env.ZSTAR_PATH;
+        }
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("readSecureFile", () => {
+    it("returns error when file does not exist", async () => {
+      const result = await zstar.readSecureFile({
+        filePath: "/nonexistent/file.gpg",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not found");
+    });
+
+    it("calls gpg --decrypt for existing file when SELinux is inactive", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-read-test-"));
+      // Create a dummy encrypted file (not real GPG, just to test the path)
+      const testFile = path.join(tmpDir, "secret.txt.gpg");
+      fs.writeFileSync(testFile, "dummy gpg data\n");
+
+      // On systems without /etc/selinux/config the label check is skipped
+      if (fs.existsSync("/etc/selinux/config")) {
+        const result = await zstar.readSecureFile({ filePath: testFile });
+        // Should fail with SELinux label error (not file-not-found)
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("zstar_archive_t");
+      } else {
+        // No SELinux — gpg should be invoked (will fail on dummy data, but exit code ≠ 0 is fine)
+        const result = await zstar.readSecureFile({ filePath: testFile });
+        // stderr should not mention "not found" — the file exists, gpg was called
+        expect(result.stderr).not.toContain("File not found");
+      }
+
+      fs.rmSync(tmpDir, { recursive: true });
+    });
+  });
 });

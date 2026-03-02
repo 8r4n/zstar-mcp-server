@@ -52,7 +52,9 @@ describe("zstar MCP server", () => {
       expect(toolNames).toContain("gpg_generate_key");
       expect(toolNames).toContain("gpg_export_public_key");
       expect(toolNames).toContain("gpg_import_key");
-      expect(tools.length).toBe(20);
+      expect(toolNames).toContain("write_file");
+      expect(toolNames).toContain("read_file");
+      expect(tools.length).toBe(22);
     });
 
     it("each tool has a description", async () => {
@@ -601,6 +603,31 @@ describe("zstar MCP server", () => {
       const text = (result.content[0] as { type: string; text: string }).text;
       expect(text).toContain("FAILED");
       expect(text).toContain("Invalid listening address");
+    });
+
+    it("write_file returns error for nonexistent file", async () => {
+      const result = await client.callTool({
+        name: "write_file",
+        arguments: {
+          filePath: "/nonexistent/secret.txt",
+          signingKeyId: "signer@example.com",
+          passphrase: "pass",
+          recipientKeyId: "recipient@example.com",
+        },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("not found");
+    });
+
+    it("read_file returns error for nonexistent file", async () => {
+      const result = await client.callTool({
+        name: "read_file",
+        arguments: { filePath: "/nonexistent/secret.txt.gpg" },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("not found");
     });
   });
 });
