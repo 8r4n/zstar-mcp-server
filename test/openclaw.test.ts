@@ -54,7 +54,7 @@ describe("OpenClaw integration (stdio transport)", () => {
   // --- Tool discovery --------------------------------------------------------
 
   describe("tool discovery", () => {
-    it("lists all 20 zstar tools", async () => {
+    it("lists all 22 zstar tools", async () => {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name);
 
@@ -78,7 +78,9 @@ describe("OpenClaw integration (stdio transport)", () => {
       expect(names).toContain("gpg_generate_key");
       expect(names).toContain("gpg_export_public_key");
       expect(names).toContain("gpg_import_key");
-      expect(tools.length).toBe(20);
+      expect(names).toContain("write_file");
+      expect(names).toContain("read_file");
+      expect(tools.length).toBe(22);
     });
 
     it("every tool has a non-empty description", async () => {

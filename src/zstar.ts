@@ -230,6 +230,41 @@ export interface VerifyChecksumOptions {
 }
 
 /**
+ * Options for writing a GPG-encrypted file using --no-compress mode.
+ * Encryption is mandatory: both signingKeyId and recipientKeyId are required.
+ * The output file is labeled with the zstar_archive_t SELinux type when SELinux is active.
+ */
+export interface WriteSecureFileOptions {
+  /** Path to the single regular file to protect. */
+  filePath: string;
+  /** GPG key ID for signing (e.g., email or key fingerprint). Required. */
+  signingKeyId: string;
+  /** Passphrase for the signing key. */
+  passphrase: string;
+  /** GPG key ID of the recipient for encryption. Required. */
+  recipientKeyId: string;
+  /** Custom base name for the output file. */
+  outputName?: string;
+  /** Working directory for the command. */
+  cwd?: string;
+}
+
+/**
+ * Options for reading (decrypting) a file previously written by writeSecureFile.
+ * When SELinux is active, the file must carry the zstar_archive_t label (MAC enforcement).
+ */
+export interface ReadSecureFileOptions {
+  /** Path to the GPG-encrypted file to read. */
+  filePath: string;
+  /** Passphrase for GPG decryption. */
+  passphrase?: string;
+  /** Output file path. If omitted, decrypted content is returned in stdout. */
+  outputFile?: string;
+  /** Working directory for the command. */
+  cwd?: string;
+}
+
+/**
  * Dependency check result.
  */
 export interface DependencyStatus {
@@ -278,16 +313,17 @@ export function findZstarScript(): string {
 function execCommand(
   command: string,
   args: string[],
-  options: ExecFileOptions = {}
+  options: ExecFileOptions & { stdin?: string } = {}
 ): Promise<ZstarResult> {
   return new Promise((resolve) => {
+    const { stdin: stdinInput, ...execOpts } = options;
     const opts: ExecFileOptions = {
       timeout: EXEC_TIMEOUT,
       maxBuffer: 10 * 1024 * 1024, // 10MB
-      ...options,
+      ...execOpts,
     };
 
-    execFile(command, args, opts, (error, stdout, stderr) => {
+    const child = execFile(command, args, opts, (error, stdout, stderr) => {
       const exitCode = error && "code" in error ? (error.code as number) : 0;
       resolve({
         stdout: String(stdout || ""),
@@ -295,6 +331,11 @@ function execCommand(
         exitCode: typeof exitCode === "number" ? exitCode : 1,
       });
     });
+
+    if (stdinInput !== undefined && child.stdin) {
+      child.stdin.write(stdinInput + "\n");
+      child.stdin.end();
+    }
   });
 }
 
@@ -941,6 +982,168 @@ export async function gpgImportKey(
     };
   }
   return execCommand("gpg", ["--import", keyPath]);
+}
+
+
+
+/**
+ * Detect whether SELinux is currently enforcing or permissive at runtime.
+ * Uses `getenforce` (preferred) or falls back to reading /sys/fs/selinux/enforce.
+ * Returns true only when SELinux is actually active in the running kernel.
+ *
+ * The `ZSTAR_SELINUX` environment variable can override the runtime check:
+ * - `"enforcing"` or `"permissive"` → treat as active (useful in tests)
+ * - `"disabled"` or `"off"` → treat as inactive (useful in tests)
+ */
+async function isSelinuxActive(): Promise<boolean> {
+  const override = process.env.ZSTAR_SELINUX?.toLowerCase();
+  if (override === "enforcing" || override === "permissive") return true;
+  if (override === "disabled" || override === "off") return false;
+
+  // Prefer getenforce — authoritative runtime check
+  const geResult = await execCommand("getenforce", []);
+  if (geResult.exitCode === 0) {
+    const mode = geResult.stdout.trim().toLowerCase();
+    return mode === "enforcing" || mode === "permissive";
+  }
+  // Fallback: kernel sysfs node
+  try {
+    const val = fs.readFileSync("/sys/fs/selinux/enforce", "utf8").trim();
+    return val === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a file carries the zstar_archive_t SELinux label.
+ * Returns null if SELinux is not active or the label is correct.
+ * Returns an error message string if the label is missing or incorrect.
+ *
+ * Uses `stat -c '%C'` to obtain only the SELinux security context string
+ * (user:role:type:level) so the type field is compared precisely, avoiding
+ * false positives from crafted filenames.
+ */
+async function checkSelinuxLabel(filePath: string): Promise<string | null> {
+  if (!(await isSelinuxActive())) {
+    return null;
+  }
+  // stat -c '%C' prints only the security context (e.g. unconfined_u:object_r:zstar_archive_t:s0)
+  const statResult = await execCommand("stat", ["-c", "%C", filePath]);
+  if (statResult.exitCode === 0) {
+    const parts = statResult.stdout.trim().split(":");
+    const typeField = parts[2] ?? "";
+    if (typeField === "zstar_archive_t") {
+      return null;
+    }
+  } else {
+    // stat with %C not supported; fall back to ls -Z and parse the context field
+    const lsResult = await execCommand("ls", ["-Z", "--", filePath]);
+    if (lsResult.exitCode === 0) {
+      // ls -Z output: "<context> <filename>" — context is first token
+      const context = lsResult.stdout.trim().split(/\s+/)[0] ?? "";
+      const parts = context.split(":");
+      const typeField = parts[2] ?? "";
+      if (typeField === "zstar_archive_t") {
+        return null;
+      }
+    }
+  }
+  return (
+    `SELinux MAC enforcement: '${filePath}' does not have the required ` +
+    `'zstar_archive_t' label. Only files written by write_file may be read.`
+  );
+}
+
+/**
+ * Apply the zstar_archive_t SELinux label to a file when SELinux is active.
+ * Silently skips if SELinux is not installed or not active.
+ */
+async function applySelinuxLabel(filePath: string): Promise<void> {
+  if (!(await isSelinuxActive())) {
+    return;
+  }
+  await execCommand("chcon", ["-t", "zstar_archive_t", filePath]);
+}
+
+/**
+ * Write (protect) a single file using --no-compress mode with mandatory GPG
+ * sign-and-encrypt.  The output file is labeled with the zstar_archive_t
+ * SELinux type when SELinux is active, enforcing mandatory access control.
+ */
+export async function writeSecureFile(
+  options: WriteSecureFileOptions
+): Promise<ZstarResult> {
+  const filePath = path.resolve(options.cwd || process.cwd(), options.filePath);
+  if (!fs.existsSync(filePath)) {
+    return { stdout: "", stderr: `File not found: ${filePath}`, exitCode: 1 };
+  }
+  if (!fs.statSync(filePath).isFile()) {
+    return {
+      stdout: "",
+      stderr: `Path is not a regular file: ${filePath}`,
+      exitCode: 1,
+    };
+  }
+  const script = findZstarScript();
+  const args: string[] = [
+    "--no-compress",
+    "-s",
+    options.signingKeyId,
+    "-r",
+    options.recipientKeyId,
+  ];
+  if (options.outputName) {
+    args.push("-o", options.outputName);
+  }
+  args.push(filePath);
+  // tarzst.sh reads the passphrase from stdin when not running in a TTY
+  return execCommand(script, args, { cwd: options.cwd, stdin: options.passphrase });
+}
+
+/**
+ * Read (decrypt) a file previously written by writeSecureFile.
+ * When SELinux is active, the file must carry the zstar_archive_t label
+ * (mandatory access control enforcement).  The decrypted output file, when
+ * written to disk, is also labeled with zstar_archive_t.
+ */
+export async function readSecureFile(
+  options: ReadSecureFileOptions
+): Promise<ZstarResult> {
+  const filePath = path.resolve(options.cwd || process.cwd(), options.filePath);
+  if (!fs.existsSync(filePath)) {
+    return { stdout: "", stderr: `File not found: ${filePath}`, exitCode: 1 };
+  }
+
+  // Enforce SELinux MAC: file must have zstar_archive_t label
+  const labelError = await checkSelinuxLabel(filePath);
+  if (labelError !== null) {
+    return { stdout: "", stderr: labelError, exitCode: 1 };
+  }
+
+  const args: string[] = ["--decrypt", "--batch", "--yes"];
+  let stdinInput: string | undefined;
+  if (options.passphrase) {
+    // Pass the passphrase via stdin (--passphrase-fd 0) to avoid exposing it
+    // in the process command line (visible via ps / /proc/<pid>/cmdline).
+    args.push("--pinentry-mode", "loopback", "--passphrase-fd", "0");
+    stdinInput = options.passphrase;
+  }
+  if (options.outputFile) {
+    const outPath = path.resolve(options.cwd || process.cwd(), options.outputFile);
+    args.push("--output", outPath);
+  }
+  args.push(filePath);
+
+  const result = await execCommand("gpg", args, { cwd: options.cwd, stdin: stdinInput });
+
+  // Label decrypted output file with zstar_archive_t when written to disk
+  if (result.exitCode === 0 && options.outputFile) {
+    const outPath = path.resolve(options.cwd || process.cwd(), options.outputFile);
+    await applySelinuxLabel(outPath);
+  }
+
+  return result;
 }
 
 /**

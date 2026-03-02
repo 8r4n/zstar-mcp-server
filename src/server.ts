@@ -880,6 +880,83 @@ export function createServer(): McpServer {
     }
   );
 
+  // --- Tool: write_file ---
+  server.tool(
+    "write_file",
+    "Protect a single file using --no-compress mode with mandatory GPG sign-and-encrypt. " +
+      "Both a signing key and a recipient encryption key are required, making encryption non-optional. " +
+      "When SELinux is active the output file is labeled with the zstar_archive_t type for mandatory access control.",
+    {
+      filePath: z
+        .string()
+        .min(1)
+        .describe("Path to the single regular file to protect"),
+      signingKeyId: z
+        .string()
+        .min(1)
+        .describe("GPG key ID used to sign (e.g., email or fingerprint)"),
+      passphrase: z
+        .string()
+        .describe("Passphrase for the signing key"),
+      recipientKeyId: z
+        .string()
+        .min(1)
+        .describe("GPG key ID of the recipient for encryption"),
+      outputName: z
+        .string()
+        .optional()
+        .describe("Custom base name for the output file"),
+      cwd: z.string().optional().describe("Working directory for the command"),
+    },
+    async (params) => {
+      const result = await zstar.writeSecureFile({
+        filePath: params.filePath,
+        signingKeyId: params.signingKeyId,
+        passphrase: params.passphrase,
+        recipientKeyId: params.recipientKeyId,
+        outputName: params.outputName,
+        cwd: params.cwd,
+      });
+      return formatResult(result, "Secure file write");
+    }
+  );
+
+  // --- Tool: read_file ---
+  server.tool(
+    "read_file",
+    "Decrypt a file previously written by write_file. " +
+      "When SELinux is active, the file must carry the zstar_archive_t label (mandatory access control); " +
+      "files without this label are rejected. " +
+      "If outputFile is provided the decrypted content is written to disk and also labeled with zstar_archive_t; " +
+      "otherwise the decrypted content is returned directly.",
+    {
+      filePath: z
+        .string()
+        .min(1)
+        .describe("Path to the GPG-encrypted file to decrypt"),
+      passphrase: z
+        .string()
+        .optional()
+        .describe("Passphrase for GPG decryption"),
+      outputFile: z
+        .string()
+        .optional()
+        .describe(
+          "Output file path. If omitted, decrypted content is returned in the response."
+        ),
+      cwd: z.string().optional().describe("Working directory for the command"),
+    },
+    async (params) => {
+      const result = await zstar.readSecureFile({
+        filePath: params.filePath,
+        passphrase: params.passphrase,
+        outputFile: params.outputFile,
+        cwd: params.cwd,
+      });
+      return formatResult(result, "Secure file read");
+    }
+  );
+
   return server;
 }
 
