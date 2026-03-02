@@ -1060,16 +1060,52 @@ ${terr}"
 }
 
 # ---------------------------------------------------------------------------
+# selinux_active
+# Returns 0 if SELinux is currently enforcing or permissive at runtime.
+# Uses getenforce (preferred) or /sys/fs/selinux/enforce as fallback.
+# ---------------------------------------------------------------------------
+selinux_active() {
+  if command -v getenforce >/dev/null 2>&1; then
+    local mode
+    mode=$(getenforce 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    [[ "$mode" == "enforcing" || "$mode" == "permissive" ]] && return 0
+    return 1
+  fi
+  # Fallback: kernel sysfs node
+  if [[ -f /sys/fs/selinux/enforce ]]; then
+    local val
+    val=$(cat /sys/fs/selinux/enforce 2>/dev/null)
+    [[ "$val" == "1" ]] && return 0
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # check_selinux_label  <file>
 # Returns 0 if SELinux is inactive or the file has zstar_archive_t label.
 # Returns 1 and prints an error message if the label check fails.
+# Uses stat -c '%C' to get only the security context, then compares the type
+# field precisely to avoid false positives from crafted filenames.
 # ---------------------------------------------------------------------------
 check_selinux_label() {
   local file="$1"
-  [[ -f /etc/selinux/config ]] || return 0
-  grep -qE '^SELINUX=(enforcing|permissive)' /etc/selinux/config 2>/dev/null || return 0
-  if ls -Z "$file" 2>/dev/null | grep -q 'zstar_archive_t'; then
-    return 0
+  selinux_active || return 0
+
+  local context type
+  # stat -c '%C' prints only the SELinux context (user:role:type:level)
+  if context=$(stat -c '%C' -- "$file" 2>/dev/null); then
+    type=$(printf '%s' "$context" | awk -F: '{print $3}')
+    if [[ "$type" == "zstar_archive_t" ]]; then
+      return 0
+    fi
+  else
+    # Fallback: ls -Z — first whitespace-delimited token is the context
+    if context=$(ls -Z -- "$file" 2>/dev/null | awk '{print $1}'); then
+      type=$(printf '%s' "$context" | awk -F: '{print $3}')
+      if [[ "$type" == "zstar_archive_t" ]]; then
+        return 0
+      fi
+    fi
   fi
   echo "SELinux MAC enforcement: '${file}' does not have the required 'zstar_archive_t' label. Only files written by write_file may be read."
   return 1
@@ -1078,18 +1114,38 @@ check_selinux_label() {
 # apply zstar_archive_t SELinux label when SELinux is active
 apply_selinux_label() {
   local file="$1"
-  [[ -f /etc/selinux/config ]] || return 0
-  grep -qE '^SELINUX=(enforcing|permissive)' /etc/selinux/config 2>/dev/null || return 0
+  selinux_active || return 0
   chcon -t zstar_archive_t "$file" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# resolve_path <path> [cwd]
+# Resolve <path> to an absolute path portably.
+# If realpath is available, use it (inside <cwd> when given).
+# Otherwise fall back to string concatenation.
+# ---------------------------------------------------------------------------
+resolve_path() {
+  local p="$1" base="${2:-}"
+  if command -v realpath >/dev/null 2>&1; then
+    if [[ -n "$base" ]]; then
+      (cd "$base" && realpath "$p" 2>/dev/null) || printf '%s' "$p"
+    else
+      realpath "$p" 2>/dev/null || printf '%s' "$p"
+    fi
+  else
+    if [[ "$p" == /* ]]; then
+      printf '%s' "$p"
+    elif [[ -n "$base" ]]; then
+      printf '%s' "${base%/}/${p}"
+    else
+      printf '%s' "$(pwd)/${p}"
+    fi
+  fi
 }
 
 handle_write_file() {
   local id_json="$1" args="$2"
   local script file_path signing_key_id passphrase recipient_key_id output_name cwd
-  script=$(find_zstar_script) || { _tool_text="Secure file write: FAILED (exit code 1)
-
-Errors:
-Could not find tarzst.sh."; return; }
   file_path=$(printf '%s' "$args" | jq -r '.filePath')
   signing_key_id=$(printf '%s' "$args" | jq -r '.signingKeyId')
   passphrase=$(printf '%s' "$args" | jq -r '.passphrase')
@@ -1097,14 +1153,9 @@ Could not find tarzst.sh."; return; }
   output_name=$(printf '%s' "$args" | jq -r '.outputName // empty')
   cwd=$(printf '%s' "$args" | jq -r '.cwd // empty')
 
-  # Resolve path
+  # Validate file existence before looking up the script (consistent with TypeScript)
   local resolved_path
-  if [[ -n "$cwd" ]]; then
-    resolved_path="$(cd "$cwd" && realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
-  else
-    resolved_path="$(realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
-  fi
-
+  resolved_path="$(resolve_path "$file_path" "$cwd")"
   if [[ ! -f "$resolved_path" ]]; then
     _tool_text="Secure file write: FAILED (exit code 1)
 
@@ -1112,6 +1163,11 @@ Errors:
 File not found: ${resolved_path}"
     return
   fi
+
+  script=$(find_zstar_script) || { _tool_text="Secure file write: FAILED (exit code 1)
+
+Errors:
+Could not find tarzst.sh."; return; }
 
   local -a cmd_args=("--no-compress" "-s" "$signing_key_id" "-r" "$recipient_key_id")
   if [[ -n "$output_name" ]]; then
@@ -1141,13 +1197,8 @@ handle_read_file() {
   output_file=$(printf '%s' "$args" | jq -r '.outputFile // empty')
   cwd=$(printf '%s' "$args" | jq -r '.cwd // empty')
 
-  # Resolve path
   local resolved_path
-  if [[ -n "$cwd" ]]; then
-    resolved_path="$(cd "$cwd" && realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
-  else
-    resolved_path="$(realpath -- "$file_path" 2>/dev/null || echo "$file_path")"
-  fi
+  resolved_path="$(resolve_path "$file_path" "$cwd")"
 
   if [[ ! -f "$resolved_path" ]]; then
     _tool_text="Secure file read: FAILED (exit code 1)
@@ -1167,22 +1218,40 @@ ${label_err}"
     return
   }
 
+  # Build GPG args; pass passphrase via stdin (--passphrase-fd 0) to avoid
+  # exposing it in the process command line (visible via ps / /proc).
   local -a gpg_args=("--decrypt" "--batch" "--yes")
   if [[ -n "$passphrase" ]]; then
-    gpg_args+=("--passphrase" "$passphrase" "--pinentry-mode" "loopback")
+    gpg_args+=("--pinentry-mode" "loopback" "--passphrase-fd" "0")
   fi
+
   local resolved_out=""
   if [[ -n "$output_file" ]]; then
-    if [[ -n "$cwd" ]]; then
-      resolved_out="$(cd "$cwd" && realpath -- "$output_file" 2>/dev/null || echo "$output_file")"
-    else
-      resolved_out="$(realpath -m -- "$output_file" 2>/dev/null || echo "$output_file")"
-    fi
+    resolved_out="$(resolve_path "$output_file" "$cwd")"
     gpg_args+=("--output" "$resolved_out")
   fi
   gpg_args+=("$resolved_path")
 
-  run_cmd gpg "${gpg_args[@]}"
+  # Execute gpg inside cwd so relative paths in --output work correctly.
+  # Pipe passphrase via stdin when needed; both cases share one code path.
+  local tmp_out tmp_err
+  tmp_out=$(mktemp); tmp_err=$(mktemp)
+  _exit_code=0
+  if [[ -n "$cwd" ]]; then
+    if [[ -n "$passphrase" ]]; then
+      printf '%s\n' "$passphrase" | (cd "$cwd" && gpg "${gpg_args[@]}") >"$tmp_out" 2>"$tmp_err" || _exit_code=$?
+    else
+      (cd "$cwd" && gpg "${gpg_args[@]}") >"$tmp_out" 2>"$tmp_err" || _exit_code=$?
+    fi
+  else
+    if [[ -n "$passphrase" ]]; then
+      printf '%s\n' "$passphrase" | gpg "${gpg_args[@]}" >"$tmp_out" 2>"$tmp_err" || _exit_code=$?
+    else
+      gpg "${gpg_args[@]}" >"$tmp_out" 2>"$tmp_err" || _exit_code=$?
+    fi
+  fi
+  _stdout=$(<"$tmp_out"); _stderr=$(<"$tmp_err")
+  rm -f "$tmp_out" "$tmp_err"
 
   # Label decrypted output file when written to disk
   if [[ "$_exit_code" -eq 0 && -n "$resolved_out" ]]; then

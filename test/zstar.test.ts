@@ -782,24 +782,49 @@ describe("zstar module", () => {
       const os = require("os");
       const path = require("path");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-read-test-"));
-      // Create a dummy encrypted file (not real GPG, just to test the path)
       const testFile = path.join(tmpDir, "secret.txt.gpg");
       fs.writeFileSync(testFile, "dummy gpg data\n");
 
-      // On systems without /etc/selinux/config the label check is skipped
-      if (fs.existsSync("/etc/selinux/config")) {
+      const origSelinux = process.env.ZSTAR_SELINUX;
+      // Force SELinux inactive so the label check is bypassed and gpg is invoked
+      process.env.ZSTAR_SELINUX = "off";
+      try {
         const result = await zstar.readSecureFile({ filePath: testFile });
-        // Should fail with SELinux label error (not file-not-found)
+        // gpg should have been invoked (will fail on dummy data, but not with file-not-found)
+        expect(result.stderr).not.toContain("File not found");
+      } finally {
+        if (origSelinux !== undefined) {
+          process.env.ZSTAR_SELINUX = origSelinux;
+        } else {
+          delete process.env.ZSTAR_SELINUX;
+        }
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("rejects file without zstar_archive_t label when SELinux is active", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-selinux-test-"));
+      const testFile = path.join(tmpDir, "secret.txt.gpg");
+      fs.writeFileSync(testFile, "dummy gpg data\n");
+
+      const origSelinux = process.env.ZSTAR_SELINUX;
+      // Force SELinux active so the label check is enforced
+      process.env.ZSTAR_SELINUX = "enforcing";
+      try {
+        const result = await zstar.readSecureFile({ filePath: testFile });
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain("zstar_archive_t");
-      } else {
-        // No SELinux — gpg should be invoked (will fail on dummy data, but exit code ≠ 0 is fine)
-        const result = await zstar.readSecureFile({ filePath: testFile });
-        // stderr should not mention "not found" — the file exists, gpg was called
-        expect(result.stderr).not.toContain("File not found");
+      } finally {
+        if (origSelinux !== undefined) {
+          process.env.ZSTAR_SELINUX = origSelinux;
+        } else {
+          delete process.env.ZSTAR_SELINUX;
+        }
+        fs.rmSync(tmpDir, { recursive: true });
       }
-
-      fs.rmSync(tmpDir, { recursive: true });
     });
   });
 });
