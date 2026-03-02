@@ -701,4 +701,150 @@ describe("zstar module", () => {
       expect(result.details).toContain("Invalid listening address");
     });
   });
+
+  describe("readFile", () => {
+    it("returns error when file does not exist", async () => {
+      const result = await zstar.readFile({ filePath: "/nonexistent/file.txt" });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not found");
+    });
+
+    it("reads an existing file", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-rf-"));
+      const filePath = path.join(tmpDir, "hello.txt");
+      fs.writeFileSync(filePath, "hello world");
+      try {
+        const result = await zstar.readFile({ filePath });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toBe("hello world");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("resolves filePath relative to cwd", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-rf-cwd-"));
+      fs.writeFileSync(path.join(tmpDir, "relative.txt"), "cwd content");
+      try {
+        const result = await zstar.readFile({ filePath: "relative.txt", cwd: tmpDir });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toBe("cwd content");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("rejects file paths with null bytes", async () => {
+      const result = await zstar.readFile({ filePath: "/tmp/file\0.txt" });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("null bytes");
+    });
+
+    it("rejects files exceeding MAX_READ_FILE_SIZE", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-rf-big-"));
+      const bigFile = path.join(tmpDir, "big.bin");
+      // Create a file slightly bigger than the limit
+      const buf = Buffer.alloc(zstar.MAX_READ_FILE_SIZE + 1, "x");
+      fs.writeFileSync(bigFile, buf);
+      try {
+        const result = await zstar.readFile({ filePath: bigFile });
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("too large");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("writeFile", () => {
+    it("writes content to a new file", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-wf-"));
+      const filePath = path.join(tmpDir, "out.txt");
+      try {
+        const result = await zstar.writeFile({ filePath, content: "hello" });
+        expect(result.exitCode).toBe(0);
+        expect(fs.readFileSync(filePath, "utf-8")).toBe("hello");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("resolves filePath relative to cwd", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-wf-cwd-"));
+      try {
+        const result = await zstar.writeFile({ filePath: "out.txt", content: "cwd write", cwd: tmpDir });
+        expect(result.exitCode).toBe(0);
+        expect(fs.readFileSync(path.join(tmpDir, "out.txt"), "utf-8")).toBe("cwd write");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("refuses to overwrite an existing file by default", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-wf-ow-"));
+      const filePath = path.join(tmpDir, "existing.txt");
+      fs.writeFileSync(filePath, "original");
+      try {
+        const result = await zstar.writeFile({ filePath, content: "new" });
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("already exists");
+        // Original content must be intact
+        expect(fs.readFileSync(filePath, "utf-8")).toBe("original");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("overwrites an existing file when overwrite is true", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-wf-ow2-"));
+      const filePath = path.join(tmpDir, "existing.txt");
+      fs.writeFileSync(filePath, "original");
+      try {
+        const result = await zstar.writeFile({ filePath, content: "new content", overwrite: true });
+        expect(result.exitCode).toBe(0);
+        expect(fs.readFileSync(filePath, "utf-8")).toBe("new content");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("blocks writes to restricted system paths", async () => {
+      const result = await zstar.writeFile({ filePath: "/etc/zstar-test.txt", content: "bad" });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("restricted");
+    });
+
+    it("returns error when parent directory does not exist", async () => {
+      const result = await zstar.writeFile({ filePath: "/tmp/nonexistent-dir-xyz/file.txt", content: "x" });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Parent directory does not exist");
+    });
+
+    it("rejects file paths with null bytes", async () => {
+      const result = await zstar.writeFile({ filePath: "/tmp/file\0.txt", content: "x" });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("null bytes");
+    });
+  });
 });

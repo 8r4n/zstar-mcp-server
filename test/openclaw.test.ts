@@ -78,7 +78,9 @@ describe("OpenClaw integration (stdio transport)", () => {
       expect(names).toContain("gpg_generate_key");
       expect(names).toContain("gpg_export_public_key");
       expect(names).toContain("gpg_import_key");
-      expect(tools.length).toBe(20);
+      expect(names).toContain("read_file");
+      expect(names).toContain("write_file");
+      expect(tools.length).toBe(22);
     });
 
     it("every tool has a non-empty description", async () => {

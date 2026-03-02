@@ -3,7 +3,7 @@
 # zstar MCP server — bash implementation
 #
 # JSON-RPC 2.0 over stdio (newline-delimited JSON).
-# Implements the Model Context Protocol (MCP) with all 20 zstar tools.
+# Implements the Model Context Protocol (MCP) with all 22 zstar tools.
 #
 # Dependencies: bash ≥4, jq, tar, zstd, gpg, pv, sha512sum/shasum, nc (optional)
 # =============================================================================
@@ -141,7 +141,7 @@ ${terr}"
 }
 
 # ---------------------------------------------------------------------------
-# Tool-schema JSON (all 20 tools)
+# Tool-schema JSON (all 22 tools)
 # ---------------------------------------------------------------------------
 tools_json() {
   cat <<'TOOLS_EOF'
@@ -438,6 +438,38 @@ tools_json() {
         "keyFile":{"type":"string","minLength":1,"description":"Path to the armored key file to import (e.g., './agent_public.asc')"}
       },
       "required":["keyFile"]
+    }
+  },
+  {
+    "name":"read_file",
+    "description":"Read the content of a file and return it as text. Optionally decrypts a GPG-encrypted file before returning the content. Plain (non-GPG) reads are limited to 10 MB.",
+    "inputSchema":{
+      "type":"object",
+      "properties":{
+        "filePath":{"type":"string","minLength":1,"description":"Path to the file to read"},
+        "cwd":{"type":"string","description":"Working directory — filePath is resolved relative to this"},
+        "gpgDecrypt":{"type":"boolean","description":"If true, decrypt the file with GPG before returning content"},
+        "passphrase":{"type":"string","description":"Passphrase for symmetric GPG decryption"}
+      },
+      "required":["filePath"]
+    }
+  },
+  {
+    "name":"write_file",
+    "description":"Write text content to a file. Optionally encrypts the content with GPG (public-key or signed+encrypted) before writing. Writing to critical system directories (/etc, /usr, /bin, etc.) is blocked. Existing files are not overwritten unless overwrite is set to true.",
+    "inputSchema":{
+      "type":"object",
+      "properties":{
+        "filePath":{"type":"string","minLength":1,"description":"Path where the file should be written"},
+        "content":{"type":"string","description":"Text content to write to the file"},
+        "cwd":{"type":"string","description":"Working directory — filePath is resolved relative to this"},
+        "overwrite":{"type":"boolean","description":"If true, overwrite an existing file. Default: false"},
+        "gpgRecipient":{"type":"string","description":"GPG recipient key ID for public-key encryption (e.g., 'user@example.com'). If set, the file is GPG-encrypted before writing."},
+        "gpgSigner":{"type":"string","description":"GPG signing key ID. If set alongside gpgRecipient, the file is signed before encryption."},
+        "gpgPassphrase":{"type":"string","description":"Passphrase for the GPG signing key"},
+        "mode":{"type":"integer","description":"POSIX file permissions as an integer (e.g., 420 for 0o644)"}
+      },
+      "required":["filePath","content"]
     }
   }
 ]
@@ -1029,6 +1061,170 @@ ${terr}"
   _tool_text="$parts"
 }
 
+# --- File I/O tools ---
+
+# Restricted system directories for write operations (matches TypeScript RESTRICTED_WRITE_DIRS)
+_RESTRICTED_WRITE_DIRS="/bin /boot /dev /etc /lib /lib64 /proc /run /sbin /sys /usr"
+
+is_restricted_write_path() {
+  local p="$1" dir
+  for dir in $_RESTRICTED_WRITE_DIRS; do
+    if [[ "$p" == "$dir" || "$p" == "$dir/"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+handle_read_file() {
+  local id_json="$1" args="$2"
+  local file_path cwd gpg_decrypt passphrase
+
+  file_path=$(printf '%s' "$args" | jq -r '.filePath')
+  cwd=$(printf '%s' "$args" | jq -r '.cwd // empty')
+  gpg_decrypt=$(printf '%s' "$args" | jq -r '.gpgDecrypt // false')
+  passphrase=$(printf '%s' "$args" | jq -r '.passphrase // empty')
+
+  # Resolve path
+  local resolved
+  if [[ -n "$cwd" ]]; then
+    resolved=$(cd "$cwd" 2>/dev/null && realpath -m "$file_path" 2>/dev/null || echo "$file_path")
+  else
+    resolved=$(realpath -m "$file_path" 2>/dev/null || echo "$file_path")
+  fi
+
+  if [[ ! -f "$resolved" ]]; then
+    _tool_text="Read file: FAILED (exit code 1)
+
+Errors:
+File not found: ${resolved}"
+    return
+  fi
+
+  if [[ "$gpg_decrypt" == "true" ]]; then
+    local -a gpg_args=("--decrypt" "--batch")
+    if [[ -n "$passphrase" ]]; then
+      gpg_args+=("--passphrase" "$passphrase" "--pinentry-mode" "loopback")
+    fi
+    gpg_args+=("$resolved")
+    run_cmd gpg "${gpg_args[@]}"
+    _tool_text=$(format_result "$_exit_code" "$_stdout" "$_stderr" "Read file")
+    return
+  fi
+
+  # Plain read — enforce 10 MB size limit
+  local max_bytes=$((10 * 1024 * 1024))
+  local file_size
+  file_size=$(stat -c '%s' "$resolved" 2>/dev/null || stat -f '%z' "$resolved" 2>/dev/null || echo 0)
+  if (( file_size > max_bytes )); then
+    _tool_text="Read file: FAILED (exit code 1)
+
+Errors:
+File too large to read (${file_size} bytes). Maximum allowed: ${max_bytes} bytes."
+    return
+  fi
+
+  run_cmd cat "$resolved"
+  _tool_text=$(format_result "$_exit_code" "$_stdout" "$_stderr" "Read file")
+}
+
+handle_write_file() {
+  local id_json="$1" args="$2"
+  local file_path content cwd overwrite gpg_recipient gpg_signer gpg_passphrase
+
+  file_path=$(printf '%s' "$args" | jq -r '.filePath')
+  content=$(printf '%s' "$args" | jq -r '.content')
+  cwd=$(printf '%s' "$args" | jq -r '.cwd // empty')
+  overwrite=$(printf '%s' "$args" | jq -r '.overwrite // false')
+  gpg_recipient=$(printf '%s' "$args" | jq -r '.gpgRecipient // empty')
+  gpg_signer=$(printf '%s' "$args" | jq -r '.gpgSigner // empty')
+  gpg_passphrase=$(printf '%s' "$args" | jq -r '.gpgPassphrase // empty')
+
+  # Resolve path
+  local resolved
+  if [[ -n "$cwd" ]]; then
+    resolved=$(cd "$cwd" 2>/dev/null && realpath -m "$file_path" 2>/dev/null || echo "$file_path")
+  else
+    resolved=$(realpath -m "$file_path" 2>/dev/null || echo "$file_path")
+  fi
+
+  # Access control: prevent writes to restricted system directories
+  if is_restricted_write_path "$resolved"; then
+    _tool_text="Write file: FAILED (exit code 1)
+
+Errors:
+Writing to restricted path is not allowed: ${resolved}"
+    return
+  fi
+
+  # Prevent overwriting existing file unless explicitly allowed
+  if [[ "$overwrite" != "true" && -e "$resolved" ]]; then
+    _tool_text="Write file: FAILED (exit code 1)
+
+Errors:
+File already exists: ${resolved}. Set overwrite to true to replace it."
+    return
+  fi
+
+  # Parent directory must exist
+  local parent_dir
+  parent_dir=$(dirname "$resolved")
+  if [[ ! -d "$parent_dir" ]]; then
+    _tool_text="Write file: FAILED (exit code 1)
+
+Errors:
+Parent directory does not exist: ${parent_dir}"
+    return
+  fi
+
+  if [[ -n "$gpg_recipient" ]]; then
+    # Write content to temp file then encrypt
+    local tmp_dir tmp_input
+    tmp_dir=$(mktemp -d)
+    tmp_input="${tmp_dir}/input.txt"
+    printf '%s' "$content" > "$tmp_input"
+    chmod 600 "$tmp_input"
+
+    local -a gpg_args=("--batch" "--yes" "--armor" "--output" "$resolved")
+    if [[ -n "$gpg_passphrase" ]]; then
+      gpg_args+=("--passphrase" "$gpg_passphrase" "--pinentry-mode" "loopback")
+    fi
+    if [[ -n "$gpg_signer" ]]; then
+      gpg_args+=("--sign" "--local-user" "$gpg_signer")
+    fi
+    gpg_args+=("--encrypt" "--recipient" "$gpg_recipient" "$tmp_input")
+
+    run_cmd gpg "${gpg_args[@]}"
+    rm -rf "$tmp_dir"
+
+    if [[ "$_exit_code" -eq 0 ]]; then
+      _tool_text="Write file: SUCCESS
+
+Output:
+File written and encrypted: ${resolved}"
+    else
+      _tool_text=$(format_result "$_exit_code" "$_stdout" "$_stderr" "Write file")
+    fi
+    return
+  fi
+
+  # Plain write
+  if printf '%s' "$content" > "$resolved" 2>/tmp/zstar-write-err; then
+    _tool_text="Write file: SUCCESS
+
+Output:
+File written: ${resolved}"
+  else
+    local write_err
+    write_err=$(<"/tmp/zstar-write-err")
+    _tool_text="Write file: FAILED (exit code 1)
+
+Errors:
+Failed to write file: ${write_err}"
+  fi
+  rm -f /tmp/zstar-write-err
+}
+
 # --- Agent communication tools ---
 
 handle_gpg_init_agent_communication() {
@@ -1331,6 +1527,8 @@ handle_request() {
         gpg_generate_key)                     handle_gpg_generate_key "$id_json" "$tool_args" ;;
         gpg_export_public_key)                handle_gpg_export_public_key "$id_json" "$tool_args" ;;
         gpg_import_key)                       handle_gpg_import_key "$id_json" "$tool_args" ;;
+        read_file)                            handle_read_file "$id_json" "$tool_args" ;;
+        write_file)                           handle_write_file "$id_json" "$tool_args" ;;
         *)
           send "$(make_error "$id_json" -32601 "Unknown tool: $tool_name")"
           return

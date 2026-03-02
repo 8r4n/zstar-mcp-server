@@ -200,6 +200,207 @@ export interface SecureChannelRequest {
 }
 
 /**
+ * Maximum file size allowed for plain (non-GPG) reads: 10 MB.
+ */
+export const MAX_READ_FILE_SIZE = 10 * 1024 * 1024;
+
+/**
+ * System directories that must not be written to.
+ */
+const RESTRICTED_WRITE_DIRS = [
+  "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64",
+  "/proc", "/run", "/sbin", "/sys", "/usr",
+];
+
+/**
+ * Validate that a file path contains no null bytes.
+ * Returns null if valid, or an error message string if invalid.
+ */
+function validateFilePath(filePath: string): string | null {
+  if (filePath.includes("\0")) {
+    return "File path must not contain null bytes.";
+  }
+  return null;
+}
+
+/**
+ * Returns true when a resolved path falls inside a restricted system directory.
+ */
+function isRestrictedWritePath(resolvedPath: string): boolean {
+  return RESTRICTED_WRITE_DIRS.some(
+    (dir) => resolvedPath === dir || resolvedPath.startsWith(dir + "/")
+  );
+}
+
+/**
+ * Options for reading a file.
+ */
+export interface ReadFileOptions {
+  /** Path to the file to read. */
+  filePath: string;
+  /** Working directory (file path is resolved relative to this). Default: cwd. */
+  cwd?: string;
+  /** If true, decrypt the file with GPG before returning content. */
+  gpgDecrypt?: boolean;
+  /** Passphrase for symmetric GPG decryption. */
+  passphrase?: string;
+}
+
+/**
+ * Options for writing a file.
+ */
+export interface WriteFileOptions {
+  /** Path where the file should be written. */
+  filePath: string;
+  /** Text content to write. */
+  content: string;
+  /** Working directory (file path is resolved relative to this). Default: cwd. */
+  cwd?: string;
+  /** If true, overwrite an existing file. Default: false. */
+  overwrite?: boolean;
+  /** GPG recipient key ID for public-key encryption. If set, the file is encrypted before writing. */
+  gpgRecipient?: string;
+  /** GPG signing key ID. If set alongside gpgRecipient, the file is signed before encryption. */
+  gpgSigner?: string;
+  /** Passphrase for the GPG signing key. */
+  gpgPassphrase?: string;
+  /** POSIX file permissions mode (e.g., 0o644). Default: system default. */
+  mode?: number;
+}
+
+/**
+ * Read a file and return its content.
+ * Optionally decrypts the file with GPG first.
+ * Plain reads are limited to MAX_READ_FILE_SIZE bytes.
+ */
+export async function readFile(options: ReadFileOptions): Promise<ZstarResult> {
+  const validationError = validateFilePath(options.filePath);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+
+  const resolvedPath = path.resolve(options.cwd || ".", options.filePath);
+
+  if (!fs.existsSync(resolvedPath)) {
+    return { stdout: "", stderr: `File not found: ${resolvedPath}`, exitCode: 1 };
+  }
+
+  if (options.gpgDecrypt) {
+    const args = ["--decrypt", "--batch"];
+    if (options.passphrase) {
+      args.push("--passphrase", options.passphrase, "--pinentry-mode", "loopback");
+    }
+    args.push(resolvedPath);
+    return execCommand("gpg", args);
+  }
+
+  // Plain read — enforce size limit
+  const stat = fs.statSync(resolvedPath);
+  if (stat.size > MAX_READ_FILE_SIZE) {
+    return {
+      stdout: "",
+      stderr: `File too large to read (${stat.size} bytes). Maximum allowed: ${MAX_READ_FILE_SIZE} bytes.`,
+      exitCode: 1,
+    };
+  }
+
+  try {
+    const content = fs.readFileSync(resolvedPath, "utf-8");
+    return { stdout: content, stderr: "", exitCode: 0 };
+  } catch (err) {
+    return {
+      stdout: "",
+      stderr: `Failed to read file: ${(err as Error).message}`,
+      exitCode: 1,
+    };
+  }
+}
+
+/**
+ * Write content to a file.
+ * Optionally encrypts the content with GPG (public-key or signed+encrypted)
+ * before writing. Writing to critical system directories is blocked.
+ */
+export async function writeFile(options: WriteFileOptions): Promise<ZstarResult> {
+  const validationError = validateFilePath(options.filePath);
+  if (validationError) {
+    return { stdout: "", stderr: validationError, exitCode: 2 };
+  }
+
+  const resolvedPath = path.resolve(options.cwd || ".", options.filePath);
+
+  // Access control: prevent writes to critical system directories
+  if (isRestrictedWritePath(resolvedPath)) {
+    return {
+      stdout: "",
+      stderr: `Writing to restricted path is not allowed: ${resolvedPath}`,
+      exitCode: 1,
+    };
+  }
+
+  // Prevent overwriting an existing file unless explicitly allowed
+  if (!options.overwrite && fs.existsSync(resolvedPath)) {
+    return {
+      stdout: "",
+      stderr: `File already exists: ${resolvedPath}. Set overwrite to true to replace it.`,
+      exitCode: 1,
+    };
+  }
+
+  // Ensure the parent directory exists
+  const parentDir = path.dirname(resolvedPath);
+  if (!fs.existsSync(parentDir)) {
+    return {
+      stdout: "",
+      stderr: `Parent directory does not exist: ${parentDir}`,
+      exitCode: 1,
+    };
+  }
+
+  if (options.gpgRecipient) {
+    // Write content to a temporary file, then encrypt with GPG
+    const tmpDir = fs.mkdtempSync(path.join(require("os").tmpdir(), "zstar-write-"));
+    const tmpInput = path.join(tmpDir, "input.txt");
+    try {
+      fs.writeFileSync(tmpInput, options.content, { mode: 0o600 });
+
+      const args = ["--batch", "--yes", "--armor", "--output", resolvedPath];
+      if (options.gpgPassphrase) {
+        args.push("--passphrase", options.gpgPassphrase, "--pinentry-mode", "loopback");
+      }
+      if (options.gpgSigner) {
+        args.push("--sign", "--local-user", options.gpgSigner);
+      }
+      args.push("--encrypt", "--recipient", options.gpgRecipient, tmpInput);
+
+      const result = await execCommand("gpg", args);
+      if (result.exitCode === 0) {
+        return { stdout: `File written and encrypted: ${resolvedPath}`, stderr: result.stderr, exitCode: 0 };
+      }
+      return result;
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true }); } catch { /* ignore cleanup errors */ }
+    }
+  }
+
+  // Plain write
+  try {
+    const writeOpts: fs.WriteFileOptions = {};
+    if (options.mode !== undefined) {
+      writeOpts.mode = options.mode;
+    }
+    fs.writeFileSync(resolvedPath, options.content, writeOpts);
+    return { stdout: `File written: ${resolvedPath}`, stderr: "", exitCode: 0 };
+  } catch (err) {
+    return {
+      stdout: "",
+      stderr: `Failed to write file: ${(err as Error).message}`,
+      exitCode: 1,
+    };
+  }
+}
+
+/**
  * Options for decompressing/extracting an archive.
  */
 export interface ExtractArchiveOptions {

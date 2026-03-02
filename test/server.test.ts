@@ -52,7 +52,9 @@ describe("zstar MCP server", () => {
       expect(toolNames).toContain("gpg_generate_key");
       expect(toolNames).toContain("gpg_export_public_key");
       expect(toolNames).toContain("gpg_import_key");
-      expect(tools.length).toBe(20);
+      expect(toolNames).toContain("read_file");
+      expect(toolNames).toContain("write_file");
+      expect(tools.length).toBe(22);
     });
 
     it("each tool has a description", async () => {
@@ -284,6 +286,36 @@ describe("zstar MCP server", () => {
       expect(required).toContain("agentName");
       expect(required).toContain("agentEmail");
       expect(required).toContain("passphrase");
+    });
+
+    it("read_file requires filePath", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "read_file");
+      expect(tool).toBeDefined();
+      const props = tool!.inputSchema.properties as Record<string, unknown>;
+      expect(props).toHaveProperty("filePath");
+      expect(props).toHaveProperty("cwd");
+      expect(props).toHaveProperty("gpgDecrypt");
+      expect(props).toHaveProperty("passphrase");
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("filePath");
+    });
+
+    it("write_file requires filePath and content", async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === "write_file");
+      expect(tool).toBeDefined();
+      const props = tool!.inputSchema.properties as Record<string, unknown>;
+      expect(props).toHaveProperty("filePath");
+      expect(props).toHaveProperty("content");
+      expect(props).toHaveProperty("cwd");
+      expect(props).toHaveProperty("overwrite");
+      expect(props).toHaveProperty("gpgRecipient");
+      expect(props).toHaveProperty("gpgSigner");
+      expect(props).toHaveProperty("gpgPassphrase");
+      const required = tool!.inputSchema.required as string[];
+      expect(required).toContain("filePath");
+      expect(required).toContain("content");
     });
   });
 
@@ -601,6 +633,112 @@ describe("zstar MCP server", () => {
       const text = (result.content[0] as { type: string; text: string }).text;
       expect(text).toContain("FAILED");
       expect(text).toContain("Invalid listening address");
+    });
+
+    it("read_file returns error for nonexistent file", async () => {
+      const result = await client.callTool({
+        name: "read_file",
+        arguments: { filePath: "/nonexistent/path/file.txt" },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("not found");
+    });
+
+    it("read_file reads an existing file", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-rf-"));
+      const testFile = path.join(tmpDir, "hello.txt");
+      fs.writeFileSync(testFile, "hello world");
+      try {
+        const result = await client.callTool({
+          name: "read_file",
+          arguments: { filePath: testFile },
+        });
+        const text = (result.content[0] as { type: string; text: string }).text;
+        expect(text).toContain("SUCCESS");
+        expect(text).toContain("hello world");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("write_file writes a new file and read_file reads it back", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-wf-"));
+      const testFile = path.join(tmpDir, "output.txt");
+      try {
+        const writeResult = await client.callTool({
+          name: "write_file",
+          arguments: { filePath: testFile, content: "test content" },
+        });
+        const writeText = (writeResult.content[0] as { type: string; text: string }).text;
+        expect(writeText).toContain("SUCCESS");
+
+        const readResult = await client.callTool({
+          name: "read_file",
+          arguments: { filePath: testFile },
+        });
+        const readText = (readResult.content[0] as { type: string; text: string }).text;
+        expect(readText).toContain("SUCCESS");
+        expect(readText).toContain("test content");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("write_file refuses to overwrite without explicit permission", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-wf-ow-"));
+      const testFile = path.join(tmpDir, "existing.txt");
+      fs.writeFileSync(testFile, "original");
+      try {
+        const result = await client.callTool({
+          name: "write_file",
+          arguments: { filePath: testFile, content: "new content" },
+        });
+        const text = (result.content[0] as { type: string; text: string }).text;
+        expect(text).toContain("FAILED");
+        expect(text).toContain("already exists");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("write_file overwrites when overwrite is true", async () => {
+      const fs = require("fs");
+      const os = require("os");
+      const path = require("path");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstar-wf-ow2-"));
+      const testFile = path.join(tmpDir, "existing.txt");
+      fs.writeFileSync(testFile, "original");
+      try {
+        const result = await client.callTool({
+          name: "write_file",
+          arguments: { filePath: testFile, content: "new content", overwrite: true },
+        });
+        const text = (result.content[0] as { type: string; text: string }).text;
+        expect(text).toContain("SUCCESS");
+        expect(fs.readFileSync(testFile, "utf-8")).toBe("new content");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true });
+      }
+    });
+
+    it("write_file blocks writes to restricted paths", async () => {
+      const result = await client.callTool({
+        name: "write_file",
+        arguments: { filePath: "/etc/test-zstar.txt", content: "bad" },
+      });
+      const text = (result.content[0] as { type: string; text: string }).text;
+      expect(text).toContain("FAILED");
+      expect(text).toContain("restricted");
     });
   });
 });

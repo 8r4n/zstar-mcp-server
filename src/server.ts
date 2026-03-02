@@ -880,6 +880,96 @@ export function createServer(): McpServer {
     }
   );
 
+  // --- Tool: read_file ---
+  server.tool(
+    "read_file",
+    "Read the content of a file and return it as text. Optionally decrypts a GPG-encrypted file before returning the content. Plain (non-GPG) reads are limited to 10 MB.",
+    {
+      filePath: z
+        .string()
+        .min(1)
+        .describe("Path to the file to read"),
+      cwd: z
+        .string()
+        .optional()
+        .describe("Working directory — filePath is resolved relative to this"),
+      gpgDecrypt: z
+        .boolean()
+        .optional()
+        .describe("If true, decrypt the file with GPG before returning content"),
+      passphrase: z
+        .string()
+        .optional()
+        .describe("Passphrase for symmetric GPG decryption"),
+    },
+    async (params) => {
+      const result = await zstar.readFile({
+        filePath: params.filePath,
+        cwd: params.cwd,
+        gpgDecrypt: params.gpgDecrypt,
+        passphrase: params.passphrase,
+      });
+      return formatResult(result, "Read file");
+    }
+  );
+
+  // --- Tool: write_file ---
+  server.tool(
+    "write_file",
+    "Write text content to a file. Optionally encrypts the content with GPG (public-key or signed+encrypted) before writing. Writing to critical system directories (/etc, /usr, /bin, etc.) is blocked. Existing files are not overwritten unless overwrite is set to true.",
+    {
+      filePath: z
+        .string()
+        .min(1)
+        .describe("Path where the file should be written"),
+      content: z
+        .string()
+        .describe("Text content to write to the file"),
+      cwd: z
+        .string()
+        .optional()
+        .describe("Working directory — filePath is resolved relative to this"),
+      overwrite: z
+        .boolean()
+        .optional()
+        .describe("If true, overwrite an existing file. Default: false"),
+      gpgRecipient: z
+        .string()
+        .optional()
+        .describe(
+          "GPG recipient key ID for public-key encryption (e.g., 'user@example.com'). If set, the file is GPG-encrypted before writing."
+        ),
+      gpgSigner: z
+        .string()
+        .optional()
+        .describe(
+          "GPG signing key ID. If set alongside gpgRecipient, the file is signed before encryption."
+        ),
+      gpgPassphrase: z
+        .string()
+        .optional()
+        .describe("Passphrase for the GPG signing key"),
+      mode: z
+        .number()
+        .int()
+        .optional()
+        .describe("POSIX file permissions as an integer (e.g., 420 for 0o644)"),
+    },
+    async (params) => {
+      const result = await zstar.writeFile({
+        filePath: params.filePath,
+        content: params.content,
+        cwd: params.cwd,
+        overwrite: params.overwrite,
+        gpgRecipient: params.gpgRecipient,
+        gpgSigner: params.gpgSigner,
+        gpgPassphrase: params.gpgPassphrase,
+        mode: params.mode,
+      });
+      return formatResult(result, "Write file");
+    }
+  );
+
   return server;
 }
 
