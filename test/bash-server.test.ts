@@ -202,6 +202,7 @@ describe("Bash MCP server (stdio transport)", () => {
       expect(props).toHaveProperty("cwd");
       expect(props).toHaveProperty("overwrite");
       expect(props).toHaveProperty("gpgRecipient");
+      expect(props).toHaveProperty("gpgSigner");
       const required = tool!.inputSchema.required as string[];
       expect(required).toContain("filePath");
       expect(required).toContain("content");

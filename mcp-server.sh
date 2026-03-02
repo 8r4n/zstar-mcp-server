@@ -1209,20 +1209,22 @@ File written and encrypted: ${resolved}"
   fi
 
   # Plain write
-  if printf '%s' "$content" > "$resolved" 2>/tmp/zstar-write-err; then
+  local write_err_file
+  write_err_file=$(mktemp)
+  if printf '%s' "$content" > "$resolved" 2>"$write_err_file"; then
     _tool_text="Write file: SUCCESS
 
 Output:
 File written: ${resolved}"
   else
     local write_err
-    write_err=$(<"/tmp/zstar-write-err")
+    write_err=$(<"$write_err_file")
     _tool_text="Write file: FAILED (exit code 1)
 
 Errors:
 Failed to write file: ${write_err}"
   fi
-  rm -f /tmp/zstar-write-err
+  rm -f "$write_err_file"
 }
 
 # --- Agent communication tools ---
